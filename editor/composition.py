@@ -108,15 +108,23 @@ def text_layer(name, text, position, size, rgba, font, *, center=False):
 
 class EnvironmentLibrary:
     """Small immutable environment snapshots; changes require an explicit refresh."""
-    def __init__(self, root, *, catalog=None):
+    def __init__(self, root, *, catalog=None, ui_text_assets=None, ui_text_catalog=None):
         self.root = root; self.files = {}; self.decoded = {}; self.catalog = catalog
         self.members = {}; self.member_sources = {}
+        self.ui_text_assets=dict(ui_text_assets or {});self.ui_text_catalog=ui_text_catalog
+
+    def effective(self,source,route,data):
+        if not self.ui_text_assets:return data
+        from .uitext import effective_node
+        identity=source+':'+('/'.join(map(str,route)))
+        if identity in self.ui_text_catalog.nodes:return effective_node(self.ui_text_catalog,identity,self.ui_text_assets,data)
+        return data
 
     def member(self, source, route):
         if self.catalog is None: raise ImageError('A source image catalog is required for archive metadata')
         self.catalog.verify(); key = (source, tuple(route))
         if key not in self.members:
-            self.members[key] = self.catalog.read_member(source, route)
+            self.members[key] = self.effective(source,route,self.catalog.read_member(source, route))
             self.member_sources[source + ':' + '/'.join(map(str, route))] = hashlib.sha256(self.members[key]).hexdigest()
         return self.members[key]
 
@@ -127,12 +135,14 @@ class EnvironmentLibrary:
             if before[0] > 32 * 1024 * 1024: raise ImageError('Layout environment exceeds 32 MiB budget')
             data = path.read_bytes()
             if stamp(path) != before: raise ImageError('Layout changed while reading; refresh compositions')
+            data=self.effective(relative,(),data)
             self.files[relative] = (before, data, hashlib.sha256(data).hexdigest())
         self.verify()
         return self.files[relative][1]
 
     def verify(self):
         if self.catalog: self.catalog.verify()
+        if self.ui_text_catalog:self.ui_text_catalog.verify()
         for relative, (before, _, _) in self.files.items():
             if stamp(self.root / relative) != before:
                 raise ImageError(f'Layout source changed: {relative}. Refresh compositions; reload game for font/text changes.')

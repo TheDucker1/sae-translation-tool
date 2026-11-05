@@ -236,7 +236,7 @@ class Window(QMainWindow):
         self.routes=RouteBook();self.script_cache={};self.seek_origin=None;self.target_phase='before';self.seek_steps=0;self.state_origin='Fresh file entry';self.file_signature=None
         self.project=None;self.project_path=None;self.preview_revision=None;self.diagnostics=[]
         self.project_disk_hash=None;self.interaction_revision=uuid.uuid4().hex
-        self.mcp_panel=None;self.mcp_workspace=None;self.export_worker=None;self.export_remote=False;self.image_panel=None
+        self.mcp_panel=None;self.mcp_workspace=None;self.export_worker=None;self.export_remote=False;self.image_panel=None;self.ui_text_panel=None
         self.model=Commands(); self.proxy=CommandFilter(self); self.proxy.setSourceModel(self.model); self.proxy.setDynamicSortFilter(False); self.proxy.setFilterKeyColumn(-1); self.proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
         central=QWidget(); self.setCentralWidget(central); outer=QVBoxLayout(central); outer.setContentsMargins(16,14,16,10)
         top=QHBoxLayout(); title=QLabel('SCRIPT STUDIO'); title.setStyleSheet('font-size:21px;font-weight:700;letter-spacing:2px'); top.addWidget(title)
@@ -246,6 +246,7 @@ class Window(QMainWindow):
         self.mcp_button=QPushButton('MCP…');self.mcp_button.clicked.connect(self.show_mcp_panel);top.addWidget(self.mcp_button)
         self.fit_button=QPushButton('Auto-fit text…');self.fit_button.clicked.connect(self.auto_fit_text);top.addWidget(self.fit_button)
         self.images_button=QPushButton('Images…');self.images_button.clicked.connect(self.show_images);top.addWidget(self.images_button)
+        self.ui_text_button=QPushButton('UI text…');self.ui_text_button.clicked.connect(self.show_ui_text);top.addWidget(self.ui_text_button)
         bar=QHBoxLayout(); self.selector=QComboBox(); self.selector.setMinimumWidth(280); self.selector.currentIndexChanged.connect(self.select_script); bar.addWidget(self.selector)
         for label,action in [('Restart',self.restart),('Rewind',self.rewind),('▶ Play',self.play),('Step',self.step_command),('Preview here',self.jump_selected),('Run forward',self.run_to_selected)]:
             b=QPushButton(label); b.clicked.connect(action); bar.addWidget(b)
@@ -460,10 +461,12 @@ class Window(QMainWindow):
         if self.workspace_tabs.currentIndex()==2:self.rebuild_file_flow()
         self.setWindowTitle('Saekano Script Studio — edited project'+(' *' if self.project.saved_revision!=self.project.revision else ''))
         if self.image_panel:self.image_panel.set_project(self.project)
+        if self.ui_text_panel:self.ui_text_panel.set_project(self.project)
 
     def textures_edited(self,previous_revision):
         if self.preview_revision==previous_revision:self.preview_revision=self.project.revision
         if self.image_panel:self.image_panel.set_project(self.project)
+        if self.ui_text_panel:self.ui_text_panel.set_project(self.project)
         self.setWindowTitle('Saekano Script Studio — texture project'+(' *' if self.project.saved_revision!=self.project.revision else ''))
         self.statusBar().showMessage('Project texture updated; save the project to keep it. Game files and scenario state unchanged.')
 
@@ -610,14 +613,14 @@ class Window(QMainWindow):
             state='cancelled' if worker.cancelled else 'failed' if worker.error else 'complete'
             if self.mcp_workspace and self.mcp_workspace.export_status:
                 self.mcp_workspace.export_status.update(state=state,error=worker.error)
-                if worker.result:self.mcp_workspace.export_status['result']={key:worker.result[key] for key in ('path','changed_scripts','changed_textures','requires_fresh_progress','output_hashes')}
+                if worker.result:self.mcp_workspace.export_status['result']={key:worker.result[key] for key in ('path','changed_scripts','changed_textures','changed_ui_text','requires_fresh_progress','output_hashes')}
             self.statusBar().showMessage('Agent export '+state+(': '+worker.error if worker.error else ''))
             if self.mcp_panel:self.mcp_panel.log.appendPlainText('Export '+state)
             worker.deleteLater();return
         if worker.cancelled:self.statusBar().showMessage('Export cancelled. Original data and existing output unchanged.')
         elif worker.error:self.problem('Export failed: '+worker.error)
         else:
-            result=worker.result;message=f"Separate patched USRDIR exported to:\n{result['path']}\n\n{len(result['changed_scripts'])} modified script(s), {result['changed_textures']} texture(s). Original files remain unchanged."
+            result=worker.result;message=f"Separate patched USRDIR exported to:\n{result['path']}\n\n{len(result['changed_scripts'])} modified script(s), {result['changed_textures']} texture(s), {result['changed_ui_text']} UI text field(s). Original files remain unchanged."
             if result['requires_fresh_progress']:message+='\n\nUse fresh saves/history; existing progress was not migrated.'
             self.statusBar().showMessage('Game export complete: '+result['path']);QMessageBox.information(self,'Export complete',message)
         worker.deleteLater()
@@ -869,6 +872,8 @@ class Window(QMainWindow):
     def file_hash(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
     def guard_edit_snapshot(self,project,revision):
+        if self.export_worker is not None or not self.centralWidget().isEnabled():
+            raise ValueError('GUI is loading/exporting; retry editing after it finishes')
         if self.project is not project or self.project.revision!=revision:
             raise ValueError('GUI edit is stale because the project changed. Nothing applied; reopen the editor for the current command.')
 
@@ -879,6 +884,17 @@ class Window(QMainWindow):
                 self.mcp_panel=McpPanel(self)
             except ImportError as error:self.problem('Install the optional MCP dependencies with setup-mcp.ps1: '+str(error));return
         self.mcp_panel.show();self.mcp_panel.raise_();self.mcp_panel.activateWindow()
+
+    def show_ui_text(self):
+        if not self.ensure_project():return
+        self.pause()
+        try:
+            if self.ui_text_panel is None:
+                from .uitextview import UiTextBrowser
+                self.ui_text_panel=UiTextBrowser(self)
+                self.ui_text_panel.textChanged.connect(lambda previous:self.edited(self.script_id))
+            self.ui_text_panel.set_project(self.project,force=True);self.ui_text_panel.show();self.ui_text_panel.raise_()
+        except (ValueError,OSError) as error:self.problem(str(error))
 
     def show_images(self):
         if not self.session.original:self.problem('Load a game folder first.');return

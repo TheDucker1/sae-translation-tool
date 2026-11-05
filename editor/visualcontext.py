@@ -128,6 +128,9 @@ class VisualContext:
             self.font_stamps, self.font_sources = font_stamps, font_sources
         if self.project_revision != workspace.project.revision:
             self.scenes.clear(); self.project_revision = workspace.project.revision
+            from .uitext import get_catalog
+            ui=getattr(workspace.project,'ui_text_assets',{})
+            self.library=EnvironmentLibrary(root,catalog=self.catalog,ui_text_assets=ui,ui_text_catalog=get_catalog(workspace.project) if ui else None)
         replacements = dict(getattr(workspace.project, 'texture_assets', {}))
         replacement_key = fingerprint({key: value['png_sha256'] for key, value in replacements.items()})
         if self.replacement_key != (self.source_key, replacement_key):

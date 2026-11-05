@@ -187,7 +187,7 @@ class ImageBrowser(QDialog):
 
     def set_project(self, project):
         self.project = project; self.replacements = dict(project.texture_assets) if project else {}
-        key = (tuple((name, value['png_sha256']) for name, value in sorted(self.replacements.items())), id(project.font_asset) if project else None)
+        key = (tuple((name, value['png_sha256']) for name, value in sorted(self.replacements.items())), id(project.font_asset) if project else None,id(project.ui_text_assets) if project else None)
         self.model.replacements = self.replacements
         if key == self.project_key:self.update_buttons();return
         self.project_key = key
@@ -195,7 +195,10 @@ class ImageBrowser(QDialog):
             from .fontpatch import effective_font
             self.font = effective_font(project, self.font)
         self.refresh_pixels()
-        if self.composition_panel:self.composition_panel.set_replacements(self.replacements, self.font)
+        if self.composition_panel:
+            from .uitext import get_catalog
+            ui=project.ui_text_assets if project else {}
+            self.composition_panel.set_replacements(self.replacements,self.font,ui,get_catalog(project) if ui else None)
 
     def refresh_pixels(self, *_):
         self.cache.clear(); self.cache_bytes = 0
@@ -429,7 +432,9 @@ class ImageBrowser(QDialog):
             self.composition_panel=CompositionBrowser(self)
             self.composition_panel.assetPicked.connect(self.focus_asset)
         focus=self.catalog.by_id.get(self.selected_id)
-        self.composition_panel.set_context(self.catalog,self.font,self.sample_text,focus,self.sample_speaker,self.samples,self.replacements)
+        from .uitext import get_catalog
+        ui=self.project.ui_text_assets if self.project else {}
+        self.composition_panel.set_context(self.catalog,self.font,self.sample_text,focus,self.sample_speaker,self.samples,self.replacements,ui,get_catalog(self.project) if ui else None)
         self.composition_panel.show();self.composition_panel.raise_();self.composition_panel.activateWindow()
 
     def focus_asset(self,identity):

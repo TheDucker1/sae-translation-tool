@@ -264,6 +264,6 @@ def apply_cleanup(project,plan,command_ids=None):
     issues=candidate.validate()
     if issues:raise ValueError(f'Cleanup rejected without changes: file{issues[0].script}/{issues[0].command}: {issues[0].message}')
     before=project.scripts.copy();before_font=project.font_asset;project.scripts=candidate.scripts;project.font_asset=candidate.font_asset
-    project.undo_stack.append(('Auto-fit translated text',before,project.scripts.copy(),before_font,project.font_asset));project.redo_stack=[]
+    project.remember(('Auto-fit translated text',before,project.scripts.copy(),before_font,project.font_asset));project.redo_stack=[]
     project.touched.update(affected);project.preview_issues=[];project.revision=uuid.uuid4().hex
     return dict(revision=project.revision,changes=result,inserted_commands=inserted,valid=True,font_changed=font_changed)

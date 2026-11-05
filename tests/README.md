@@ -24,6 +24,7 @@ Run the affected module, for example:
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_visual_mcp -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_texture_projects -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_texture_export.py -v
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_ui_text.py -v
 ```
 
 Translator/MCP checks require `requirements-mcp.txt`. Run a focused check when
@@ -53,3 +54,8 @@ Texture export checks cover palette/alpha limits, rectangular swizzle, stride/ga
 tail retention, combined nested GPDA/gzip/script/FONT merge and seek repair,
 texture-only export, no-overwrite and preflight failure before publication.
 No original game assets are required.
+
+UI text checks cover UTF16 lengths/non-BMP text, native quote/CRLF table handling,
+CP932/placeholder/protected-field rejection, atomic batches and source fingerprints,
+mixed script/UI Undo/reopen, effective environment reads, combined texture/script/
+catalogue/environment export with seek repair, and human/agent draft conflicts.

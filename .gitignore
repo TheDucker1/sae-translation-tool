@@ -26,6 +26,7 @@ Thumbs.db
 !/docs/TRANSLATOR_GUIDE.md
 !/docs/FONT_ASSET.md
 !/docs/IMAGE_ASSETS.md
+!/docs/UI_TEXT.md
 
 # Keep local original-game/integration campaigns outside this alpha checkpoint.
 /tests/*
@@ -43,6 +44,7 @@ Thumbs.db
 !/tests/test_visual_mcp.py
 !/tests/test_texture_projects.py
 !/tests/test_texture_export.py
+!/tests/test_ui_text.py
 
 # Original/extracted game assets, native evidence and generated translations.
 GAMEFILE/

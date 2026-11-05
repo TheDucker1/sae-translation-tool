@@ -23,6 +23,12 @@ class TranslationEdit(StrictModel):
     dialogue_mode:Literal['ordinary','battle']='ordinary'
 
 
+class UiTextEdit(StrictModel):
+    field_id:Id
+    expected_text:Annotated[str,Field(max_length=65536)]
+    translation:Annotated[str,Field(max_length=8192)]
+
+
 class CommandEdit(StrictModel):
     action:Literal['insert_before','insert_after','replace','delete']
     script_id:Index

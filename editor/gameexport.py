@@ -12,6 +12,7 @@ from .seekwriter import relocate
 from .imageassets import stamp
 from .imagecodec import ImageError, ImageCancelled
 from .textureexport import prepare_textures, patch_tree, changed_paths
+from .uitext import prepare as prepare_ui_text
 
 
 class ExportError(ValueError):pass
@@ -122,6 +123,14 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     except ImageError as error:raise ExportError('Texture export validation failed: '+str(error)) from error
     report['textures']=texture_rows
     report['changed_textures']=sum(row['changed'] for row in texture_rows)
+    try:ui_changes,ui_rows,ui_catalog=prepare_ui_text(getattr(project,'ui_text_assets',{}),root)
+    except ValueError as error:raise ExportError('UI text export validation failed: '+str(error)) from error
+    report['ui_text']=ui_rows;report['changed_ui_text']=sum(row['changed'] for row in ui_rows)
+    if ui_catalog:
+        for name,metadata in ui_catalog.sources.items():
+            if name in source_stamps and source_stamps[name]!=metadata['stamp']:raise ExportError('UI text source changed: '+name)
+            source_stamps[name]=metadata['stamp']
+        for name in ui_changes:report['source_hashes'][name]=ui_catalog.sources[name]['sha256']
     if catalog:
         for name,metadata in catalog.sources.items():
             if name in source_stamps and source_stamps[name]!=metadata['stamp']:raise ExportError('Source changed while preparing textures: '+name)
@@ -166,6 +175,11 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
             base=files[name] if name in files else catalog.source_data(name)
             files[name]=patch_tree(base,changes,cancelled)
         if 'resource.dat' in textures:paths.update(changed_paths(textures['resource.dat']))
+        for name,changes in ui_changes.items():
+            checkpoint(progress,cancelled,'Rebuilding UI text in '+name+'…')
+            base=files[name] if name in files else ui_catalog.source(name)
+            files[name]=patch_tree(base,changes,cancelled)
+        if 'resource.dat' in ui_changes:paths.update(changed_paths(ui_changes['resource.dat']))
     except ImageCancelled as error:raise ExportCancelled(str(error)) from error
     except ImageError as error:raise ExportError('Texture container export failed: '+str(error)) from error
     first_changes={}
@@ -176,6 +190,7 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     if changed:first_changes[4]=history_tables(project,first,changed)
     files['first.dat']=repack(Archive(files['first.dat']),first_changes)
     if catalog:catalog.verify()
+    if ui_catalog:ui_catalog.verify()
     if any(stamp(root/name)!=value for name,value in source_stamps.items()):raise ExportError('Source changed while preparing export')
     report['output_hashes']={name:hashlib.sha256(data).hexdigest() for name,data in files.items()}
     if font:report['font_asset']['exported_font_sha256']=report['output_hashes']['Font.gsf']

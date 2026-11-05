@@ -80,11 +80,12 @@ class CompositionBrowser(QDialog):
         for check in (self.press_start, self.skip, self.auto, self.cursor): check.toggled.connect(self.changed)
         self.backdrop.currentIndexChanged.connect(self.changed); self.text.textChanged.connect(self.changed)
 
-    def set_context(self, catalog, font, sample_text='', focus=None, sample_speaker=-1, samples=None, replacements=None):
+    def set_context(self, catalog, font, sample_text='', focus=None, sample_speaker=-1, samples=None, replacements=None, ui_text_assets=None,ui_text_catalog=None):
         self.invalidate()
         self.catalog = catalog; self.font = font; self.font_consumer = FontConsumer(font) if font else None
         self.replacements = dict(replacements or {})
-        self.library = EnvironmentLibrary(catalog.root, catalog=catalog); self.loader = TextureLoader(AssetResolver(catalog, {} if self.original.isChecked() else self.replacements))
+        self.ui_text_assets=dict(ui_text_assets or {});self.ui_text_catalog=ui_text_catalog
+        self.library = EnvironmentLibrary(catalog.root, catalog=catalog,ui_text_assets=self.ui_text_assets,ui_text_catalog=ui_text_catalog); self.loader = TextureLoader(AssetResolver(catalog, {} if self.original.isChecked() else self.replacements))
         self.backdrop.blockSignals(True); self.backdrop.clear(); self.backdrop.addItem('Neutral matte', None)
         for a in catalog.assets:
             if a.source == 'resource.dat' and len(a.route) == 2 and a.route[0] in (5, 9) and a.status == 'Ready':
@@ -113,10 +114,12 @@ class CompositionBrowser(QDialog):
             if bank == 1 and 41 <= focus.route[-1] <= 49: self.speaker.setValue(focus.route[-1] - 41)
         self.family.setCurrentIndex(self.family.findData(key)); self.configure_family(); self.timer.stop(); self.rebuild()
 
-    def set_replacements(self, replacements, font=None):
+    def set_replacements(self, replacements, font=None,ui_text_assets=None,ui_text_catalog=None):
         self.replacements = dict(replacements)
         if font is not None:self.font = font
         if not self.catalog:return
+        if ui_text_assets is not None:self.ui_text_assets=dict(ui_text_assets);self.ui_text_catalog=ui_text_catalog
+        self.library=EnvironmentLibrary(self.catalog.root,catalog=self.catalog,ui_text_assets=getattr(self,'ui_text_assets',{}),ui_text_catalog=getattr(self,'ui_text_catalog',None))
         self.loader = TextureLoader(AssetResolver(self.catalog, {} if self.original.isChecked() else replacements))
         self.font_consumer = FontConsumer(self.font) if self.font else None
         self.rebuild()
@@ -170,7 +173,7 @@ class CompositionBrowser(QDialog):
 
     def refresh(self):
         if self.catalog:
-            self.library = EnvironmentLibrary(self.catalog.root, catalog=self.catalog); self.rebuild()
+            self.library = EnvironmentLibrary(self.catalog.root, catalog=self.catalog,ui_text_assets=getattr(self,'ui_text_assets',{}),ui_text_catalog=getattr(self,'ui_text_catalog',None)); self.rebuild()
 
     def rebuild(self):
         if not self.catalog: return

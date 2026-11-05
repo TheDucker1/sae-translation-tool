@@ -188,6 +188,10 @@ image/composition caches without restarting the scenario simulator.
 
 ## Export edited textures to the game
 
+For live UI labels/prompts/help text, use **UI text…**, not texture replacement.
+These strings are now editable and flow into the same UI compositions/export.
+See [UI text](UI_TEXT.md). Texture lettering remains a PNG editing task.
+
 Restart the editor, load the original USRDIR and open your saved project. Review
 the PNG replacements and compositions, then choose **Export game…** and a separate
 new/empty output folder. Use the exported data copy for game testing. Original

@@ -60,6 +60,10 @@ when fresh progress is required; it does not migrate personal saves.
 tree. Search/filter textures, view transparency and known atlas regions, inspect
 archive/member locations and literal script uses, and extract original image
 members and/or PNGs into a separate empty folder with a provenance manifest.
+**UI text…** separately discovers and edits environment/catalogue labels, prompts,
+settings/help, save messages, Extras titles, keywords and profile items/responses.
+These share Undo/save, scene previews and game export; protected resource/control
+fields are identified explicitly. See [UI text](docs/UI_TEXT.md).
 Images are decoded on selection. **Import PNG…** stores same-size lossless texture
 replacements in the editor project, with Undo/Redo and current/original comparison.
 Save the project to retain them. **Export game…** now merges texture, script and

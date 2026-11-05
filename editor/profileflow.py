@@ -90,12 +90,12 @@ def script_names(first):
     return [child[0] for child in root[1][4][1]]
 
 
-def load(root,archive,names):
-    env=environment((root/'env/env_otaku_mode.dat').read_bytes())
+def load(root,archive,names,read_asset=None):
+    env=environment(read_asset('env/env_otaku_mode.dat',()) if read_asset else (root/'env/env_otaku_mode.dat').read_bytes())
     first=Archive((root/'first.dat').read_bytes());tables=Archive(first.read(3));catalog=[]
     for i in range(len(tables.entries)):
         entries=[]
-        for row in rows(tables.read(i).decode('utf-16-le'),'\t'):
+        for row in rows((read_asset('first.dat',(3,i)) if read_asset else tables.read(i)).decode('utf-16-le'),'\t'):
             if row and row[0]=='ON':
                 if len(row)<5:raise ValueError('Truncated profile item row')
                 entries.append(dict(id=number(row[1]),category=number(row[2]),name=row[3].split('\0',1)[0],description=row[4].split('\0',1)[0]))
@@ -109,7 +109,7 @@ def load(root,archive,names):
     bank=Archive(Archive(archive.read(3)).read(1));scenes=[]
     for i in range(len(bank.entries)):
         characters=[]
-        for row in rows(bank.read(i).decode('cp932'),','):
+        for row in rows((read_asset('resource.dat',(3,1,i)) if read_asset else bank.read(i)).decode('cp932'),','):
             if not row or row[0]!='ON':continue
             if len(row)<3:raise ValueError('Truncated profile scene row')
             if row[1]=='CHARA':characters.append(dict(id=number(row[2]),events=[]))

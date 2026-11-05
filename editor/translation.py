@@ -23,6 +23,7 @@ from .mcp_models import TranslationEdit,CommandEdit,PreviewInput,BankEdit,Id,Ind
 from .dialogueview import project_flow,transcript,readable
 from .textlayout import TextLayoutService,native_field
 from .fontpatch import effective_font
+from .mcp_models import UiTextEdit
 
 GUIDE=(ROOT/'docs/TRANSLATOR_GUIDE.md').read_text(encoding='utf-8')
 
@@ -119,7 +120,7 @@ class TranslationWorkspace:
     def commit(self,candidate,label):
         issues=self.diagnostics(candidate)
         if issues:raise ValueError('Batch rejected without changes: '+json.dumps([asdict(d) for d in issues[:12]],ensure_ascii=False))
-        p=self.project;p.undo_stack.append((label,p.scripts.copy(),candidate.scripts.copy()));p.redo_stack=[]
+        p=self.project;p.remember((label,p.scripts.copy(),candidate.scripts.copy()));p.redo_stack=[]
         p.scripts=candidate.scripts;p.touched=candidate.touched;p.preview_issues=[];p.revision=uuid.uuid4().hex
         self._cache={};self._preview_revision=None
         self._cache[('validation',p.revision)]=[]
@@ -186,6 +187,7 @@ class TranslationWorkspace:
             self._cache[key]=dict(scripts=len(self.project.scripts),text_fields=total,modified_text_fields=modified)
         return dict(revision=self.project.revision,unsaved=self.project.saved_revision!=self.project.revision,
                     texture_replacement_count=len(getattr(self.project,'texture_assets',{})),
+                    ui_text_replacement_count=len(getattr(self.project,'ui_text_assets',{})),
                     font_asset={k:self.project.font_asset['manifest'].get(k) for k in ('format','font_sha256','source_sha256','generator_revision')} if self.project.font_asset else None,
                     project_file=self.project_file,profile=deepcopy(self.profile),context_revision=self.context_revision(),**self._cache[key],
                     preview_current=self._preview_revision==self.project.revision,
@@ -197,6 +199,41 @@ class TranslationWorkspace:
         scripts=[s for s in self.project.scripts.values() if query.casefold() in s.name.casefold()]
         rows=[dict(id=s.id,name=s.name.strip(' \0'),commands=len(s.commands),text_commands=sum(c.opcode in TEXT_OPS for c in s.commands),has_edit_history=s.id in self.project.touched) for s in scripts[start:start+limit]]
         return dict(revision=self.project.revision,scripts=rows,next_start=start+limit if start+limit<len(scripts) else None)
+
+    @locked
+    def list_ui_text(self,query:Annotated[str,Field(max_length=200)]='',category:Annotated[str,Field(max_length=100)]='',
+                     source:Annotated[str,Field(max_length=240)]='',include_protected:bool=False,start:Index=0,limit:Limit=30)->dict[str,Any]:
+        """Discover non-script labels/prompts/settings/help/keyword/catalogue text, all languages. Page stable field IDs and original/current text. Protected syntax/resource names are optional; coverage/issues reported."""
+        from .uitext import get_catalog
+        c=get_catalog(self.project);rows=[];needle=query.casefold()
+        for key,f in c.fields.items():
+            current=self.project.ui_text_assets.get(key,{}).get('text',f['original'])
+            if not include_protected and not f['editable']:continue
+            if category and category!=f['category'] or source and source!=f['source']:continue
+            if needle not in ' '.join((key,f['category'],f['original'],current)).casefold():continue
+            rows.append(dict(f,current=current,modified=key in self.project.ui_text_assets))
+        return dict(revision=self.project.revision,fields=rows[start:start+limit],total=len(rows),next_start=start+limit if start+limit<len(rows) else None,
+            categories=sorted({f['category'] for f in c.fields.values()}),inventory=c.summary())
+
+    @locked
+    def get_ui_text(self,field_id:Id)->dict[str,Any]:
+        """Read UI text field encoding/location/tokens/restrictions and neighboring strings for translation context."""
+        from .uitext import get_catalog
+        c=get_catalog(self.project)
+        if field_id not in c.fields:raise ValueError('Unknown UI text field_id; call list_ui_text')
+        f=c.fields[field_id];node=c.nodes[f['node_id']]
+        neighbors=[dict(row,current=self.project.ui_text_assets.get(key,{}).get('text',row['original'])) for key,row in c.fields.items()
+            if row['node_id']==f['node_id'] and abs(row['index']-f['index'])<=2]
+        return dict(revision=self.project.revision,field=dict(f,current=self.project.ui_text_assets.get(field_id,{}).get('text',f['original'])),
+            source_sha256=c.sources[f['source']]['sha256'],member_sha256=node['sha256'],neighbors=neighbors)
+
+    @locked
+    def apply_ui_text(self,edits:Annotated[list[UiTextEdit],Field(min_length=1,max_length=100)],expected_revision:Id)->dict[str,Any]:
+        """Atomically translate known UI fields with exact expected_text/revision. Preserve placeholders/control syntax, encoding and native table structure. Undo/save/scene preview/export share these changes."""
+        self.check_revision(expected_revision)
+        rows=[UiTextEdit.model_validate(e) if isinstance(e,dict) else e for e in edits]
+        changed=self.project.set_ui_texts([(e.field_id,e.expected_text,e.translation) for e in rows]);self._cache={};self._preview_revision=None
+        return dict(revision=self.project.revision,changed=changed,applied_fields=[e.field_id for e in rows])
 
     def visual_context(self,expected_catalog_revision=None):
         from .visualcontext import VisualContext
@@ -566,7 +603,7 @@ class TranslationWorkspace:
         self.check_revision(expected_revision);target=self.path(folder)
         if self.workspace.is_relative_to(target):raise ValueError('Export must be below the workspace root')
         result=export_game(self.project,target)
-        return dict(revision=self.project.revision,path=result['path'],changed_scripts=result['changed_scripts'],changed_textures=result['changed_textures'],textures=result['textures'],requires_fresh_progress=result['requires_fresh_progress'])
+        return dict(revision=self.project.revision,path=result['path'],changed_scripts=result['changed_scripts'],changed_textures=result['changed_textures'],changed_ui_text=result['changed_ui_text'],textures=result['textures'],requires_fresh_progress=result['requires_fresh_progress'])
 
     def require_preview(self):
         if self._preview_revision!=self.project.revision:raise ValueError('Preview is absent/stale after edits; call preview_start')
