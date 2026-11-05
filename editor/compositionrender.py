@@ -109,6 +109,7 @@ def render_composition(composition, textures, font_consumer=None):
             if not layer.rgba[3]: continue
             p.save()
             try:
+                if layer.clip: p.setClipRect(QRectF(*layer.clip))
                 p.setOpacity(layer.rgba[3] / 255)
                 if layer.rotation:
                     degrees, x, y = layer.rotation
@@ -131,7 +132,7 @@ def render_composition(composition, textures, font_consumer=None):
                     if not sw or not sh or not layer.destination[2] or not layer.destination[3]: continue
                     if abs(sw) * abs(sh) > 64 * 1024 * 1024:
                         issues.append(f'{layer.name}: crop exceeds decode budget'); continue
-                    piece = clamped_crop(image, sx, sy, abs(sw), abs(sh))
+                    piece = clamped_crop(image, sx + min(sw, 0), sy + min(sh, 0), abs(sw), abs(sh))
                     if sw < 0 or sh < 0:
                         axes = Qt.Orientation(0)
                         if sw < 0: axes |= Qt.Horizontal

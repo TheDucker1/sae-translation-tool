@@ -3,8 +3,8 @@ from pathlib import Path
 import tempfile
 import unittest
 from PySide6.QtGui import QImage, QColor
-from editor.composition import Layer, Composition, blit, EnvironmentLibrary
-from editor.compositionrender import clamped_crop, render_composition
+from editor.composition import Layer, Composition, blit, text_layer, EnvironmentLibrary
+from editor.compositionrender import clamped_crop, render_composition, FontConsumer
 from editor.imagecodec import ImageError
 
 
@@ -20,7 +20,7 @@ class CompositionTests(unittest.TestCase):
         crop = clamped_crop(source, -1, 0, 4, 2)
         self.assertEqual([crop.pixelColor(i, 1).getRgb() for i in range(4)],
                          [(200, 0, 0, 255), (200, 0, 0, 255), (0, 0, 100, 255), (0, 0, 100, 255)])
-        layout = Composition('flip', layers=[Layer('flipped', asset='x', source=[0, 0, -2, 1], destination=[0, 0, 2, 1])])
+        layout = Composition('flip', layers=[Layer('flipped', asset='x', source=[2, 0, -2, 1], destination=[0, 0, 2, 1])])
         image, issues = render_composition(layout, {'x': source})
         self.assertFalse(issues)
         self.assertEqual(image.pixelColor(0, 0).getRgb(), (0, 0, 100, 255))
@@ -47,6 +47,25 @@ class CompositionTests(unittest.TestCase):
             library = EnvironmentLibrary(root); self.assertEqual(library.read('layout.dat'), b'initial')
             path.write_bytes(b'external change')
             with self.assertRaisesRegex(ImageError, 'Layout source changed'): library.verify()
+
+    def test_clipped_signed_source_and_cached_icon_natural_size(self):
+        layer = Layer('flipped clipped row', asset='x', source=[2, 0, -2, 1], destination=[0, 0, 2, 1], clip=[1, 0, 1, 1])
+        layout = Composition('mask', layers=[layer]); layout.clear = (5, 6, 7, 255)
+        image, issues = render_composition(layout, {'x': self.pixels()})
+        self.assertFalse(issues)
+        self.assertEqual(image.pixelColor(0, 0).getRgb(), (5, 6, 7, 255))
+        self.assertEqual(image.pixelColor(1, 0).getRgb(), (200, 0, 0, 255))
+        class IconFont:
+            cached = {'\ue000': (0, 0, 0, 2, 1)}
+            bitmap_height = 1
+            def glyph(self, code):
+                return dict(width=2, height=1, bitmap=True, rgba='c80000ff000064ff')
+        font = IconFont()
+        layout.layers = [text_layer('Original-size help icon', '\ue000', [0, 0], 0, [255] * 4, font)]
+        image, issues = render_composition(layout, {}, FontConsumer(font))
+        self.assertFalse(issues)
+        self.assertEqual(image.pixelColor(0, 0).getRgb(), (200, 0, 0, 255))
+        self.assertEqual(image.pixelColor(1, 0).getRgb(), (0, 0, 100, 255))
 
 
 if __name__ == '__main__': unittest.main()

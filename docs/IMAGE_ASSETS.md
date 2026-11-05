@@ -26,6 +26,14 @@ Choose **Images… → UI compositions…**. Implemented compositions include:
   explicit override, and a chapter palette with two sample caption lines.
 - **Shared dialogs:** measured/wrapped prompt, tiled frame/decorations, authored
   button groups, focus and opacity. Group `-1` shows no buttons.
+- **Save / load:** sixty slot positions, authored clipped cards and scrollbars,
+  empty/occupied/protected/new states, help icons and an optional thumbnail taken
+  from the chosen context backdrop. Metadata is explicitly sample content; the
+  preview does not read personal saves. Select Save or Load under **Screen mode**.
+- **Backlog:** one sample-text line per retained row (up to200), selection, clipped
+  scrolling rows, scrollbar and voice-icon frames. Clear Sample text for the empty
+  state. Rows can start from dialogue samples in the selected file; these are not
+  personal history. No voice replay or game rewind is executed.
 
 Choose a background/CG for context in non-title previews, or leave the
 neutral matte. Context backdrops are selected explicitly; they do not claim to
@@ -40,8 +48,7 @@ it in the individual-image browser. Layouts keep texture identities separate fro
 pixels so future replacement previews can resolve the same identities; replacement
 editing/import/reinjection is not available yet.
 
-**UI families** tracks implemented and pending adapters. Save/load, backlog,
-settings/help, Extras, profiles/approach
+**UI families** tracks implemented and pending adapters. Settings/help, Extras, profiles/approach
 and battle remain pending. Choosing one reports that status and clears the preview.
 It does not substitute an unrelated layout. Coverage/diagnostics also identifies
 omitted title particles/live submenus and text decorations or reveal effects.
@@ -53,6 +60,12 @@ this is not a Vita/PC pixel-parity test. **Refresh layouts** rereads environment
 snapshots. Reload the game to import externally changed font/text settings, and
 re-index images for changed source textures. Source switches invalidate pending
 work; current preview textures use bounded caches and cancellable loading.
+
+List controls expose a static scroll-channel sample and an optional first visible
+row (`-1` chooses automatically). Cards use their authored viewport clip; layer
+inspection still shows their complete destination and clip rectangles. Save dates
+and occupied-card text are samples. The new-marker particle scale is a static
+sample rather than playback of its timed cycle.
 
 ## Find and inspect
 

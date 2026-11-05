@@ -881,6 +881,13 @@ class Window(QMainWindow):
         if choice:examples['choices']='\n'.join(row['label'] for row in choice['args']['choices'])
         chapter=command if command and command['opcode']==0x3ec else next((c for c in self.commands if c['opcode']==0x3ec),None)
         if chapter:examples['calendar']='\n'.join(chapter['args']['texts']);examples['system']=chapter['args']['texts'][-1]
+        retained=[];budget=4096
+        for c in self.commands:
+            if c['opcode']!=0x64:continue
+            value=c['args']['text']
+            if len(value)+1>budget or len(retained)>=12:break
+            retained.append(value);budget-=len(value)+1
+        examples['backlog']='\n'.join(retained)
         self.image_panel.set_source(self.session.root,self.session.descriptions,self.session.text,
                                     sample['args']['text'] if sample else '',sample['args']['speaker'] if sample else -1,examples)
         self.image_panel.show();self.image_panel.raise_();self.image_panel.activateWindow()

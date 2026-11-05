@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QForm
 from PySide6.QtCore import Signal
 from .composition import FAMILIES, IMPLEMENTED_FAMILIES, EnvironmentLibrary, Layer
 from .compositioncommon import PARAMETERS, cached, dialog_environment, calendar_environment
+from .compositionlists import PARAMETERS as LIST_PARAMETERS, backlog_environment
 from .compositionrender import AssetResolver, TextureLoader, FontConsumer, render_composition
 from .imageview import ImageCanvas, ImageJob
 
@@ -85,7 +86,7 @@ class CompositionBrowser(QDialog):
         self.speaker.setValue(sample_speaker)
         key = 'message'
         if focus and focus.source == 'first.dat' and focus.route and focus.route[0] == 1:
-            key = 'dialogs'
+            key = 'slots' if focus.route[-1] in (2, 6, 10, 11, 18) else 'dialogs'
         if focus and focus.source == 'resource.dat' and focus.route:
             bank = focus.route[0]
             key = {15: 'title', 13: 'system', 16: 'battle', 3: 'profile', 2: 'extras'}.get(bank, 'message')
@@ -98,6 +99,7 @@ class CompositionBrowser(QDialog):
                 if focus.route[-1] in (72, 81, 76, 75): self.variant.setValue((72, 81, 76, 75).index(focus.route[-1]))
             if bank == 13 and 7 <= focus.route[-1] <= 21:
                 self.selected.setValue((focus.route[-1] - 7) % 5)
+            if bank == 13 and 62 <= focus.route[-1] <= 72: key = 'slots'
             if bank == 1 and 41 <= focus.route[-1] <= 49: self.speaker.setValue(focus.route[-1] - 41)
         self.family.setCurrentIndex(self.family.findData(key)); self.configure_family(); self.timer.stop(); self.rebuild()
 
@@ -107,18 +109,19 @@ class CompositionBrowser(QDialog):
             self.family_text[self.last_family] = self.text.toPlainText()
         if key != self.last_family:
             defaults = {'message': '', 'system': 'Chapter preview', 'choices': 'Choice 1\nChoice 2',
-                        'calendar': 'Chapter preview\nSubtitle preview', 'dialogs': 'Preview prompt'}
+                        'calendar': 'Chapter preview\nSubtitle preview', 'dialogs': 'Preview prompt',
+                        'slots': 'Preview chapter\nPreview dialogue', 'backlog': 'Sample dialogue1\nSample dialogue2\nSample dialogue3'}
             self.text.blockSignals(True); self.text.setPlainText(self.family_text.get(key, defaults.get(key, ''))); self.text.blockSignals(False)
             self.last_family = key
-        self.selected.setMaximum(3 if key == 'title' else 4)
+        self.selected.setMaximum(59 if key == 'slots' else 199 if key == 'backlog' else 3 if key == 'title' else 4)
         self.selected.setMinimum(-1 if key in ('choices', 'dialogs') else 0)
         self.selected.setSpecialValueText('No focus')
         for widget in (self.variant, self.press_start): widget.setEnabled(key == 'title')
         for widget in (self.speaker, self.opacity, self.skip, self.auto, self.cursor): widget.setEnabled(key == 'message')
-        self.selected.setEnabled(key in ('title', 'system', 'choices', 'dialogs')); self.progress.setEnabled(key in ('title', 'message', 'choices', 'dialogs'))
+        self.selected.setEnabled(key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog')); self.progress.setEnabled(key in ('title', 'message', 'choices', 'dialogs'))
         self.chapter.setEnabled(key in ('system', 'calendar')); self.backdrop.setEnabled(key != 'title'); self.text.setEnabled(key != 'title')
         common = {
-            self.selected: key in ('title', 'system', 'choices', 'dialogs'), self.variant: key == 'title',
+            self.selected: key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog'), self.variant: key == 'title',
             self.press_start: key == 'title', self.progress: key in ('title', 'message', 'choices', 'dialogs'),
             self.angle: key in ('title', 'message'), self.speaker: key == 'message', self.opacity: key == 'message',
             self.chapter: key in ('system', 'calendar'), self.skip: key == 'message', self.auto: key == 'message',
@@ -126,12 +129,17 @@ class CompositionBrowser(QDialog):
         for widget, visible in common.items(): self.form.setRowVisible(widget, visible)
         while self.extra_form.rowCount(): self.extra_form.removeRow(0)
         self.parameters = {}
-        for name, label, kind, default, *bounds in PARAMETERS.get(key, ()):
+        for name, label, kind, default, *bounds in (PARAMETERS | LIST_PARAMETERS).get(key, ()):
             if kind == 'bool': control = QCheckBox(); control.setChecked(default); control.toggled.connect(self.changed)
+            elif kind == 'enum':
+                control = QComboBox()
+                for value, text in bounds[0]: control.addItem(text, value)
+                control.setCurrentIndex(control.findData(default)); control.currentIndexChanged.connect(self.changed)
             else:
                 control = QSpinBox(); control.setRange(*bounds); control.setValue(default); control.valueChanged.connect(self.changed)
             self.parameters[name] = control; self.extra_form.addRow(label, control)
-        self.text.setToolTip('One choice per line' if key == 'choices' else 'Two caption lines' if key == 'calendar' else 'Preview text only')
+        self.text.setToolTip('One entry per line' if key in ('choices', 'backlog') else 'Two caption lines' if key == 'calendar' else
+                            'Chapter title then dialogue sample' if key == 'slots' else 'Preview text only')
         self.changed()
 
     def changed(self, *_):
@@ -155,11 +163,20 @@ class CompositionBrowser(QDialog):
                      speaker=self.speaker.value(), opacity=self.opacity.value(), chapter=self.chapter.value(),
                      angle=self.angle.value(), press_start=self.press_start.isChecked(), skip=self.skip.isChecked(),
                      auto=self.auto.isChecked(), cursor=self.cursor.isChecked(), text=self.text.toPlainText())
-        state.update({name: control.isChecked() if isinstance(control, QCheckBox) else control.value()
+        state.update({name: control.isChecked() if isinstance(control, QCheckBox) else control.currentData() if isinstance(control, QComboBox) else control.value()
                       for name, control in self.parameters.items()})
         if len(state['text']) > 4096:
             self.status.setText('Sample text is limited to4096 characters.'); return
         try:
+            if key == 'backlog':
+                count = len(state['text'].splitlines())
+                self.selected.blockSignals(True); self.selected.setMaximum(max(0, count - 1)); self.selected.blockSignals(False)
+                state['selected'] = self.selected.value()
+                env = cached(self.library, 'backlog', 'env/env_backlog.dat', backlog_environment)
+                voice = self.parameters['voice_frame']; voice.blockSignals(True)
+                voice.setMaximum(len(env.voices) - 1); voice.blockSignals(False); state['voice_frame'] = voice.value()
+                first = self.parameters['first']; first.blockSignals(True)
+                first.setMaximum(max(0, count - env.signed(0xc188))); first.blockSignals(False); state['first'] = first.value()
             if key == 'choices':
                 count = len(state['text'].splitlines()) or 2
                 self.selected.blockSignals(True); self.selected.setMaximum(max(0, count - 1)); self.selected.blockSignals(False)
@@ -180,6 +197,7 @@ class CompositionBrowser(QDialog):
                 count = len(self.library.get('system').colors[0x26c])
                 self.chapter.blockSignals(True); self.chapter.setMaximum(count - 1); self.chapter.blockSignals(False)
                 state['chapter'] = self.chapter.value()
+            state['context_image'] = self.backdrop.currentData()
             self.catalog.verify(); composition = self.library.build(key, state, self.font)
             backdrop = self.backdrop.currentData()
             if backdrop and key != 'title':

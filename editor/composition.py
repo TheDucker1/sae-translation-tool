@@ -17,8 +17,8 @@ FAMILIES = (
     ('choices', 'Scenario choices', 'Implemented: authored cards, selection, history color and sample entries'),
     ('calendar', 'Calendar / chapter banners', 'Implemented: month/day/palette and two-caption chapter banner'),
     ('dialogs', 'Shared dialogs', 'Implemented: measured prompt, tiled frame, authored button groups and focus'),
-    ('slots', 'Save / load', 'Pending: slot cards and generated thumbnail placeholders'),
-    ('backlog', 'Backlog', 'Pending: list and scroll layout'),
+    ('slots', 'Save / load', 'Implemented: clipped cards, empty/occupied/lock/new variants and scrollbars; sample records only'),
+    ('backlog', 'Backlog', 'Implemented: clipped sample dialogue rows, selection, voice icons and scrollbars'),
     ('settings', 'Settings / help', 'Pending: page-specific widget bindings'),
     ('extras', 'Extras', 'Pending: gallery / music / replay layouts'),
     ('profile', 'Profiles / approach', 'Pending: profile / approach / result layouts'),
@@ -39,6 +39,7 @@ class Layer:
     text: str = ''
     size: int = 0
     glyphs: list = field(default_factory=list)
+    clip: list = field(default_factory=list)
 
 
 @dataclass
@@ -75,7 +76,7 @@ def blit(name, bank, entry, shape, *, source='resource.dat', scale=1., offset=(0
 
 def text_layer(name, text, position, size, rgba, font, *, center=False):
     size = int(size)
-    if not 0 < size <= 1024: raise ImageError('Composition text size outside supported range')
+    if not 0 <= size <= 1024: raise ImageError('Composition text size outside supported range')
     # Native simple DrawString advances by nominal PVF cells even for cached glyphs.
     chars = units(text).split('\0', 1)[0]
     widths = [size // 2 if 0x20 <= ord(c) <= 0x7e or 0xff61 <= ord(c) <= 0xffa0 else size for c in chars]
@@ -84,10 +85,13 @@ def text_layer(name, text, position, size, rgba, font, *, center=False):
     glyphs, cursor = [], x
     for c, width in zip(chars, widths):
         cached = font.cached.get(c) if font is not None else None
-        drawn = math.ceil(cached[3] * size / font.bitmap_height) if cached else width
-        glyphs.append(dict(code=ord(c), rect=[cursor, y, drawn, size]))
+        drawn = math.ceil(cached[3] * size / font.bitmap_height) if cached and size else cached[3] if cached else width
+        height = size or (font.bitmap_height if cached else 0)
+        glyphs.append(dict(code=ord(c), rect=[cursor, y, drawn, height]))
         cursor += width
-    return Layer(name, kind='text', destination=[x, y, cursor - x, size],
+    extent = max((g['rect'][0] + g['rect'][2] - x for g in glyphs), default=cursor - x)
+    height = max((g['rect'][3] for g in glyphs), default=size)
+    return Layer(name, kind='text', destination=[x, y, extent, height],
                  rgba=list(rgba), text=text, size=size, glyphs=glyphs)
 
 
@@ -127,21 +131,23 @@ class EnvironmentLibrary:
             result = builders[family](self.get(family), state, font)
         else:
             from .compositioncommon import ADAPTERS
-            result = ADAPTERS[family](self, state, font)
+            from .compositionlists import ADAPTERS as LIST_ADAPTERS
+            result = (ADAPTERS | LIST_ADAPTERS)[family](self, state, font)
         result.sources = {k: v[2] for k, v in self.files.items()}
         return result
 
 
 class Fields:
     """Typed environment reader. Keys are configuration identities, not file offsets."""
-    def __init__(self, data):
+    def __init__(self, data, *, legacy=True):
         self.r = Reader(data); self.r.take(3)
+        self.legacy = legacy
         self.scalar = {}; self.color = {}; self.sprite = {}; self.point = {}; self.rect = {}
         self.ints = {}; self.colors = {}; self.sprites = {}; self.points = {}; self.rects = {}; self.strings = {}
 
     def read(self, kind, key):
         r = self.r
-        readers = dict(scalar=lambda: r.word(), color=lambda: color(r.word()), sprite=lambda: sprite(r),
+        readers = dict(scalar=lambda: r.word(), color=lambda: color(r.word()), sprite=lambda: sprite(r, self.legacy),
                        point=lambda: [r.word('i'), r.word('i')], rect=lambda: [r.word('i') for _ in range(4)],
                        string=lambda: r.string())
         if kind in readers: value = readers[kind]()

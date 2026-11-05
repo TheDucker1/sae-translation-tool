@@ -30,3 +30,5 @@ It requires PySide6 but no game files or optional MCP package.
 Composition checks use tiny synthetic pixels to distinguish atlas edge clamping,
 flips, anchor/scale, tint, layer blending and pivot rotation, plus layout-source
 snapshot invalidation. They do not replay menu controllers or game scenarios.
+The focused list-rendering case also checks clipped reversed source rectangles
+and natural-size cached help icons without any original assets or save data.
