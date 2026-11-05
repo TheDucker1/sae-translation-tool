@@ -221,14 +221,29 @@ class TranslationWorkspace:
     @locked
     def import_texture_png(self,asset_id:Id,filename:Annotated[str,Field(min_length=1,max_length=240)],expected_revision:Id,
                            expected_png_sha256:Id|None=None,expected_catalog_revision:Id|None=None)->dict[str,Any]:
-        """Import a same-size lossless <=8-bit PNG from a workspace-relative file as a project texture replacement. Atomic Undo/revision; no game/GXT export. Exact PNG bytes retained in the saved project."""
+        """Import a same-size lossless <=8-bit PNG as a project replacement. Undo/revision guarded. Game export checks original GXT palette/alpha constraints separately; exact PNG retained."""
         from .textureassets import read_png,sha,summary
         self.check_revision(expected_revision);context=self.visual_context(expected_catalog_revision);data=read_png(self.path(filename))
         if expected_png_sha256 is not None and sha(data)!=expected_png_sha256:raise ValueError('PNG file checksum changed; inspect the current file and retry')
         previous=self.project.revision;changed=self.project.set_texture(asset_id,data,context.catalog)
         self._cache={}
         if self._preview_revision==previous:self._preview_revision=self.project.revision
-        return dict(revision=self.project.revision,asset_id=asset_id,changed=changed,replacement=summary(self.project.texture_assets[asset_id]),scope='project only; game texture export is not implemented')
+        return dict(revision=self.project.revision,asset_id=asset_id,changed=changed,replacement=summary(self.project.texture_assets[asset_id]),scope='project replacement; check_texture_export checks lossless game encoding before export_game_copy')
+
+    @locked
+    def check_texture_export(self,expected_revision:Id,asset_id:Id|None=None,start:Index=0,limit:Limit=30)->dict[str,Any]:
+        """Read-only actual GXT encoding preflight (no files written). Check one replacement or all; pages report rows. Original size/format retained, P8 <=256 RGBA colors, opaque stays opaque; no quantization."""
+        from .textureexport import prepare_textures
+        from .imagecodec import ImageError
+        self.check_revision(expected_revision)
+        records=self.project.texture_assets
+        if asset_id is not None:
+            if asset_id not in records:raise ValueError('No PNG replacement for this asset_id')
+            records={asset_id:records[asset_id]}
+        try:_,rows,_=prepare_textures(records,self.project.root)
+        except ImageError as error:return dict(revision=self.project.revision,valid=False,issues=[str(error)],files_written=False)
+        return dict(revision=self.project.revision,valid=True,issues=[],files_written=False,total=len(rows),
+            textures=rows[start:start+limit],next_start=start+limit if start+limit<len(rows) else None)
 
     @locked
     def remove_texture_replacement(self,asset_id:Id,expected_revision:Id)->dict[str,Any]:
@@ -551,7 +566,7 @@ class TranslationWorkspace:
         self.check_revision(expected_revision);target=self.path(folder)
         if self.workspace.is_relative_to(target):raise ValueError('Export must be below the workspace root')
         result=export_game(self.project,target)
-        return dict(revision=self.project.revision,path=result['path'],changed_scripts=result['changed_scripts'],requires_fresh_progress=result['requires_fresh_progress'])
+        return dict(revision=self.project.revision,path=result['path'],changed_scripts=result['changed_scripts'],changed_textures=result['changed_textures'],textures=result['textures'],requires_fresh_progress=result['requires_fresh_progress'])
 
     def require_preview(self):
         if self._preview_revision!=self.project.revision:raise ValueError('Preview is absent/stale after edits; call preview_start')

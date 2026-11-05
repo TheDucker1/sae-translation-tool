@@ -42,6 +42,7 @@ Thumbs.db
 !/tests/test_composition_battle.py
 !/tests/test_visual_mcp.py
 !/tests/test_texture_projects.py
+!/tests/test_texture_export.py
 
 # Original/extracted game assets, native evidence and generated translations.
 GAMEFILE/

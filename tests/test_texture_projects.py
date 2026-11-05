@@ -17,7 +17,6 @@ from editor.imageassets import build_catalog
 from editor.textureassets import decode_png, png_bytes, write_png
 from editor.composition import Composition, Layer
 from editor.compositionrender import AssetResolver, TextureLoader, FontConsumer, render_composition
-from editor.gameexport import export_game, ExportError
 from tests.test_image_assets import gxt
 from tests.test_document import fixture
 
@@ -87,11 +86,5 @@ class TextureProjectTests(unittest.TestCase):
         self.assertFalse(issues); self.assertEqual(image.pixelColor(2, 1).getRgb(), (8, 9, 10, 255))
         image, issues = render_composition(composition, {}, consumer)
         self.assertFalse(issues); self.assertEqual(image.pixelColor(2, 1).getRgb(), (0, 255, 0, 255))
-
-    def test_game_export_refuses_project_only_textures_before_writing(self):
-        self.project.set_texture(self.identity, self.png, self.catalog); destination = self.folder / 'game-export'
-        with self.assertRaisesRegex(ExportError, 'project-only'): export_game(self.project, destination)
-        self.assertFalse(destination.exists())
-
 
 if __name__ == '__main__': unittest.main()

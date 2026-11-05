@@ -62,8 +62,10 @@ archive/member locations and literal script uses, and extract original image
 members and/or PNGs into a separate empty folder with a provenance manifest.
 Images are decoded on selection. **Import PNG…** stores same-size lossless texture
 replacements in the editor project, with Undo/Redo and current/original comparison.
-Save the project to retain them. No GXT encoding or game reinjection is included;
-game export rejects projects containing texture replacements at this stage.
+Save the project to retain them. **Export game…** now merges texture, script and
+font edits into a separate patched USRDIR. GXT encoding is lossless and retains
+original dimensions/formats: P8 textures allow at most256 RGBA colors; opaque
+originals must stay opaque. Invalid replacements fail before copying files.
 **UI compositions…** assembles title/menu, gameplay message-window, system-menu,
 choices, calendar/chapter, shared-dialog, save/load, backlog, settings/help and
 Extras, profile/approach and battle layouts with preview states and inspectable
@@ -130,7 +132,9 @@ Start with `list_textures` or `list_ui_scenes`, then `describe_ui_scene` and
 `get_ui_scene`. `get_ui_scene_layers(kind="text")` reads UI strings/styles directly.
 These calls inspect snapshots without changing the human's GUI or project.
 `write_texture_png`, `import_texture_png` and `remove_texture_replacement` support
-project-only texture authoring through the same workspace and revision rules.
+texture authoring through the same workspace and revision rules. Use
+`check_texture_export` for a read-only GXT preflight, then `export_game_copy` only
+when a patched game-data copy is requested. No launcher or executable changes.
 See the [translator/tool guide](docs/TRANSLATOR_GUIDE.md).
 
 ## Development

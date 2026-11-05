@@ -337,6 +337,8 @@ class ImageBrowser(QDialog):
         if key in self.replacements:
             from .textureassets import summary
             self.details.appendPlainText('\n\nProject PNG replacement (saved inside editor project):\n' + json.dumps(summary(self.replacements[key]), indent=2))
+        from .gxtwriter import constraints
+        self.details.appendPlainText('\n\nGame export constraints (checked before writing):\n' + json.dumps(constraints(asset), indent=2))
         self.regions.clear(); self.uses.clear()
         item = QListWidgetItem('Whole texture'); item.setData(Qt.UserRole, None); self.regions.addItem(item)
         for region in asset.regions:

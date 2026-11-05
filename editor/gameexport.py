@@ -9,6 +9,9 @@ import tempfile
 from .archive import Archive
 from .packing import payload,member,pack_members,repack
 from .seekwriter import relocate
+from .imageassets import stamp
+from .imagecodec import ImageError, ImageCancelled
+from .textureexport import prepare_textures, patch_tree, changed_paths
 
 
 class ExportError(ValueError):pass
@@ -85,16 +88,17 @@ def history_tables(project,first,changed):
 
 
 def prepare_archives(project,source=None,progress=None,cancelled=None):
-    """Pure preparation: no output writes; returns patched pair and a report."""
-    if getattr(project,'texture_assets',None):raise ExportError('Texture replacements are project-only; game texture export is not implemented yet. No export written.')
+    """Pure preparation: no output writes; returns patched files and a report."""
     checkpoint(progress,cancelled,'Validating project and source scripts…')
+    root=Path(source or project.root).resolve()
+    source_stamps={name:stamp(root/name) for name in ('first.dat','resource.dat')+ (('Font.gsf',) if project.font_asset else ())}
     issues=project.validate()
     if issues:
         locations=project.locations()
         raise ExportError('Project validation failed: '+ '; '.join(
             f'Script {d.script}, command {locations.get(d.command,(-1,"?"))[1]} ({d.command}): {d.message}' for d in issues[:5]))
-    root=Path(source or project.root).resolve()
     first_bytes=(root/'first.dat').read_bytes();resource_bytes=(root/'resource.dat').read_bytes()
+    if any(stamp(root/name)!=value for name,value in source_stamps.items()):raise ExportError('Source changed while preparing export')
     first=Archive(first_bytes);resource=Archive(resource_bytes);scripts=nested(resource,4)
     if set(project.scripts)!=set(range(len(scripts.entries))):raise ExportError('Project/source script registry differs')
     locations=project.locations();changed={};objects={}
@@ -110,10 +114,19 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
                 source_hashes={name:hashlib.sha256(data).hexdigest() for name,data in [('first.dat',first_bytes),('resource.dat',resource_bytes)]},
                 requires_fresh_progress=False,notes=['Original game files and personal saves are not modified.'])
     font=bytes.fromhex(project.font_asset['data_hex']) if project.font_asset else None
-    if font:report['font_asset']={k:v for k,v in project.font_asset['manifest'].items() if k!='glyphs'}
-    if not changed:
-        report['output_hashes']=report['source_hashes'].copy()
-        return dict(first=first_bytes,resource=resource_bytes,report=report,font=font)
+    if font:
+        report['font_asset']={k:v for k,v in project.font_asset['manifest'].items() if k!='glyphs'}
+        report['source_hashes']['Font.gsf']=project.font_asset['manifest']['source_sha256']
+    try:textures,texture_rows,catalog=prepare_textures(getattr(project,'texture_assets',{}),root,progress,cancelled)
+    except ImageCancelled as error:raise ExportCancelled(str(error)) from error
+    except ImageError as error:raise ExportError('Texture export validation failed: '+str(error)) from error
+    report['textures']=texture_rows
+    report['changed_textures']=sum(row['changed'] for row in texture_rows)
+    if catalog:
+        for name,metadata in catalog.sources.items():
+            if name in source_stamps and source_stamps[name]!=metadata['stamp']:raise ExportError('Source changed while preparing textures: '+name)
+            source_stamps[name]=metadata['stamp']
+        for name in textures:report['source_hashes'][name]=catalog.sources[name]['sha256']
     checkpoint(progress,cancelled,'Preparing script objects and voice companions…')
     needs_voices={sid for sid in changed if voice_ids(project.scripts[sid].commands)!=voice_ids(project.baseline[sid].commands)}
     pool={}
@@ -145,18 +158,32 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
         report['requires_fresh_progress']|=structural
         report['changed_scripts'].append(dict(id=sid,name=current.name.strip(' \0'),original_commands=len(baseline.commands),commands=len(current.commands),structural=structural,voice_companion_rebuilt=sid in needs_voices,sha256=hashlib.sha256(compiled).hexdigest()))
     new_resource=repack(resource,{4:repack(scripts,replacements)})
-    checkpoint(progress,cancelled,'Relocating seek-map offsets, sizes and content checksums…')
-    seek,visited=relocate(first.read(5,gzip=True),resource_bytes,new_resource,paths)
-    metadata=history_tables(project,first,changed)
-    new_first=repack(first,{4:metadata,5:gzip.compress(seek,compresslevel=9,mtime=0)})
-    report['seek_records']=visited
-    report['output_hashes']={name:hashlib.sha256(data).hexdigest() for name,data in [('first.dat',new_first),('resource.dat',new_resource)]}
+    files={'first.dat':first_bytes,'resource.dat':new_resource}
+    if font is not None:files['Font.gsf']=font
+    try:
+        for name,changes in textures.items():
+            checkpoint(progress,cancelled,'Rebuilding texture containers in '+name+'…')
+            base=files[name] if name in files else catalog.source_data(name)
+            files[name]=patch_tree(base,changes,cancelled)
+        if 'resource.dat' in textures:paths.update(changed_paths(textures['resource.dat']))
+    except ImageCancelled as error:raise ExportCancelled(str(error)) from error
+    except ImageError as error:raise ExportError('Texture container export failed: '+str(error)) from error
+    first_changes={}
+    if files['resource.dat']!=resource_bytes:
+        checkpoint(progress,cancelled,'Relocating seek-map offsets, sizes and content checksums…')
+        seek,visited=relocate(first.read(5,gzip=True),resource_bytes,files['resource.dat'],paths)
+        first_changes[5]=gzip.compress(seek,compresslevel=9,mtime=0);report['seek_records']=visited
+    if changed:first_changes[4]=history_tables(project,first,changed)
+    files['first.dat']=repack(Archive(files['first.dat']),first_changes)
+    if catalog:catalog.verify()
+    if any(stamp(root/name)!=value for name,value in source_stamps.items()):raise ExportError('Source changed while preparing export')
+    report['output_hashes']={name:hashlib.sha256(data).hexdigest() for name,data in files.items()}
+    if font:report['font_asset']['exported_font_sha256']=report['output_hashes']['Font.gsf']
     if report['requires_fresh_progress']:report['notes'].append('Use fresh game saves/history: command or choice identities changed; old progress is not migrated.')
-    return dict(first=new_first,resource=new_resource,report=report,font=font)
+    return dict(first=files['first.dat'],resource=files['resource.dat'],report=report,font=files.get('Font.gsf'),files=files,source_stamps=source_stamps)
 
 
 def export_game(project,destination,progress=None,cancelled=None):
-    if getattr(project,'texture_assets',None):raise ExportError('Texture replacements are project-only; game texture export is not implemented yet. No export written.')
     source=Path(project.root).resolve();destination=Path(destination).expanduser().resolve()
     if not project.root or not source.is_dir():raise ExportError('Project has no valid original USRDIR')
     if destination==source or destination.is_relative_to(source) or source.is_relative_to(destination):raise ExportError('Export folder must be separate from original USRDIR')
@@ -170,7 +197,7 @@ def export_game(project,destination,progress=None,cancelled=None):
         if path.is_file():files.append(path)
         elif path.is_dir():directories.append(path.relative_to(source))
     prepared=prepare_archives(project,source,progress,cancelled)
-    required=sum(p.stat().st_size for p in files)+len(prepared['first'])+len(prepared['resource'])+len(prepared['font'] or b'')
+    required=sum(p.stat().st_size for p in files)+sum(len(data) for data in prepared['files'].values())
     if shutil.disk_usage(destination.parent).free<required:raise ExportError('Not enough free space for a complete game-data copy')
     with tempfile.TemporaryDirectory(prefix='.saekano-export-',dir=destination.parent) as temporary:
         container=Path(temporary).resolve()
@@ -180,9 +207,8 @@ def export_game(project,destination,progress=None,cancelled=None):
         for path in files:
             relative=path.relative_to(source);target=staging/relative;target.parent.mkdir(parents=True,exist_ok=True)
             checkpoint(progress,cancelled,'Exporting '+str(relative)+'…')
-            if relative.as_posix() in {'first.dat','resource.dat'}:
-                target.write_bytes(prepared['first' if relative.name=='first.dat' else 'resource'])
-            elif relative.as_posix()=='Font.gsf' and prepared['font'] is not None:target.write_bytes(prepared['font'])
+            if relative.as_posix() in prepared['files']:
+                target.write_bytes(prepared['files'][relative.as_posix()])
             else:
                 before=path.stat()
                 with path.open('rb') as src,target.open('xb') as out:
@@ -194,6 +220,7 @@ def export_game(project,destination,progress=None,cancelled=None):
         report=prepared['report'];report['files']=copied
         (staging/'saekano-export.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
         checkpoint(progress,cancelled,'Publishing completed export…')
+        if any(stamp(source/name)!=value for name,value in prepared['source_stamps'].items()):raise ExportError('Source changed during export; no copy published')
         if destination.exists():destination.rmdir()  # Only an empty directory can be removed.
         try:staging.replace(destination)
         except OSError:

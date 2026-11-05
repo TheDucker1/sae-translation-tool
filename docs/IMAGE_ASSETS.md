@@ -170,9 +170,9 @@ project has replacements. Use the PNG authoring controls below for current pixel
 PNG bytes and decoded straight RGBA pixels are preserved, including partial alpha
 and RGB values under fully transparent pixels. Original GXT palette/swizzle/storage
 metadata stays in the provenance; a PNG is not a byte-identical GXT container.
-This stage stores PNG project deltas and does not encode/reinject GXT or write game
-archives. Game export rejects a project containing texture replacements before
-writing output, so those changes cannot be silently omitted.
+**Export game…** encodes those pixels into the original GXT layout and merges
+them with script/font edits in a separate complete patched USRDIR. It preflights
+all replacements before copying; an invalid replacement cannot be silently omitted.
 
 Atlas crops/positions/metrics remain unchanged, hence the exact-dimension rule.
 Original font-atlas replacements also affect cached bitmap glyphs in composition
@@ -185,6 +185,42 @@ Reopening checks original asset identity/file/member hashes, PNG checksums,
 dimensions and decoded pixels. A modified/mismatched source rejects the project
 rather than attaching pixels to another texture. Texture-only changes refresh
 image/composition caches without restarting the scenario simulator.
+
+## Export edited textures to the game
+
+Restart the editor, load the original USRDIR and open your saved project. Review
+the PNG replacements and compositions, then choose **Export game…** and a separate
+new/empty output folder. Use the exported data copy for game testing. Original
+files, personal saves, executables and launcher settings remain untouched. Export
+is staged and only published after completion; cancellation/failure leaves no
+partially published copy. Existing destination files are never overwritten.
+
+The image details show **Game export constraints** for the selected texture:
+
+- Dimensions must remain identical. UI atlas crops/destination rectangles and
+  font glyph records are authored separately; replacing an image with a larger
+  one does not update them. Particle grids also depend on texture dimensions.
+- P8 ARGB retains at most256 distinct RGBA colors across the **whole texture**,
+  including transparent pixels. P8 opaque RGB additionally requires alpha255
+  everywhere. A PNG may preview correctly yet fail this stricter game constraint.
+  Reduce colors deliberately in your image editor; export never quantizes.
+- Original32-bit ARGB textures retain full8-bit RGBA. Export keeps original
+  format, swizzle, row stride, palette placement, headers, extent and padding.
+  It cannot change a P8 texture into32-bit to bypass a consumer's format limits.
+- GXT must use the supported single-texture, one-mip layouts above. Original
+  GPDA kind0/1 raw/gzip and FONT paths are supported. Changed type2 paths, opaque
+  seek subtrees and non-GXT originals reject explicitly rather than guessing.
+
+Nested archive names/kinds/indices and unrelated physical payloads are retained.
+Changed gzip ancestors are rebuilt; resource seek offsets/sizes/checksums are
+recalculated after merging all changes. Original FONT atlas edits preserve any
+generated Latin atlas and its records. `saekano-export.json` records changed
+texture IDs, constraints and source/output GXT/pixel/file hashes. Identical decoded
+imports leave the original GXT byte-for-byte unchanged. Source changes during
+preparation/copy abort publication.
+
+These checks verify encoding and archive consistency. They do not claim every
+texture consumer or rendered frame has been playtested on either platform.
 
 ## Coverage limits
 
@@ -214,3 +250,5 @@ For agent authoring, write_texture_png creates a separate workspace PNG;
 import_texture_png stores the edited file in the project, and
 remove_texture_replacement reverts it. All writes require the current project
 revision; the same Save/Undo/preview behavior applies in standalone and live GUI.
+check_texture_export performs actual lossless encoding without writing files;
+export_game_copy performs the same preflight and publishes a separate complete copy.

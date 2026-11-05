@@ -23,6 +23,7 @@ Run the affected module, for example:
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_composition_battle -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_visual_mcp -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_texture_projects -v
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_texture_export.py -v
 ```
 
 Translator/MCP checks require `requirements-mcp.txt`. Run a focused check when
@@ -47,5 +48,8 @@ Visual MCP checks cover native image blocks with separate structured geometry,
 offscreen/text/glyph/filter paging and strict state/stale-snapshot handling. They
 require optional MCP dependencies and working local sockets for Python asyncio.
 Texture project checks use tiny PNG/GXT fixtures for exact transparent RGBA/PNG
-bytes, save/reopen/Undo, corrupt/mismatched inputs, bitmap-atlas cache refresh and
-the project-only game-export guard. No original game assets are required.
+bytes, save/reopen/Undo, corrupt/mismatched inputs and bitmap-atlas cache refresh.
+Texture export checks cover palette/alpha limits, rectangular swizzle, stride/gap/
+tail retention, combined nested GPDA/gzip/script/FONT merge and seek repair,
+texture-only export, no-overwrite and preflight failure before publication.
+No original game assets are required.

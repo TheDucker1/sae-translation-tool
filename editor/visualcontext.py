@@ -12,6 +12,7 @@ from .compositionstate import resolve_state
 from .compositionrender import AssetResolver, TextureLoader, FontConsumer, render_composition
 from .imageassets import build_catalog, stamp
 from .imagecodec import ImageError
+from .gxtwriter import constraints
 from .text import TextPresentation, unicode_text
 
 IMAGE_KEY = '_mcp_image_png'  # Removed by the protocol adapter, never JSON/base64 text.
@@ -176,7 +177,7 @@ class VisualContext:
         if identity not in self.catalog.by_id: raise ImageError('Unknown texture asset_id; call list_textures')
         asset = self.catalog.by_id[identity]
         result = dict(catalog_revision=self.catalog_revision, texture=asset_summary(asset), provenance=deepcopy(asset.chain),
-            view=view, replacement=self.replacement_info(identity),
+            view=view, replacement=self.replacement_info(identity), game_export_constraints=constraints(asset),
             source_sha256=self.catalog.sources[asset.source]['sha256'], coordinates=dict(units='texture pixels', rectangle='[x,y,width,height]', origin='top-left'),
             guidance='Texture lettering is baked into pixels. UI text layers are separately exposed by get_ui_scene; do not assume OCR text is a script field.')
         if not include_image: return result

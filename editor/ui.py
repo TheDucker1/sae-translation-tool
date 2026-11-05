@@ -610,13 +610,14 @@ class Window(QMainWindow):
             state='cancelled' if worker.cancelled else 'failed' if worker.error else 'complete'
             if self.mcp_workspace and self.mcp_workspace.export_status:
                 self.mcp_workspace.export_status.update(state=state,error=worker.error)
+                if worker.result:self.mcp_workspace.export_status['result']={key:worker.result[key] for key in ('path','changed_scripts','changed_textures','requires_fresh_progress','output_hashes')}
             self.statusBar().showMessage('Agent export '+state+(': '+worker.error if worker.error else ''))
             if self.mcp_panel:self.mcp_panel.log.appendPlainText('Export '+state)
             worker.deleteLater();return
         if worker.cancelled:self.statusBar().showMessage('Export cancelled. Original data and existing output unchanged.')
         elif worker.error:self.problem('Export failed: '+worker.error)
         else:
-            result=worker.result;message=f"Separate patched USRDIR exported to:\n{result['path']}\n\n{len(result['changed_scripts'])} modified script(s). Original files remain unchanged."
+            result=worker.result;message=f"Separate patched USRDIR exported to:\n{result['path']}\n\n{len(result['changed_scripts'])} modified script(s), {result['changed_textures']} texture(s). Original files remain unchanged."
             if result['requires_fresh_progress']:message+='\n\nUse fresh saves/history; existing progress was not migrated.'
             self.statusBar().showMessage('Game export complete: '+result['path']);QMessageBox.information(self,'Export complete',message)
         worker.deleteLater()
