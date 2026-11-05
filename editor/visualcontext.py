@@ -108,6 +108,7 @@ class VisualContext:
     def __init__(self):
         self.source_key = None; self.catalog = None; self.scenes = OrderedDict(); self.local = threading.local()
         self.project_revision = None
+        self.replacements = {}; self.replacement_key = None
 
     def bind(self, workspace):
         root = Path(workspace.project.root).resolve(); key = (str(root), id(getattr(workspace._runtime, 'original', None)))
@@ -126,6 +127,11 @@ class VisualContext:
             self.font_stamps, self.font_sources = font_stamps, font_sources
         if self.project_revision != workspace.project.revision:
             self.scenes.clear(); self.project_revision = workspace.project.revision
+        replacements = dict(getattr(workspace.project, 'texture_assets', {}))
+        replacement_key = fingerprint({key: value['png_sha256'] for key, value in replacements.items()})
+        if self.replacement_key != (self.source_key, replacement_key):
+            self.replacements = replacements; self.replacement_key = (self.source_key, replacement_key)
+            self.loader = TextureLoader(AssetResolver(self.catalog, replacements)); self.scenes.clear()
         self.root = root; self.verify()
         return self
 
@@ -157,19 +163,24 @@ class VisualContext:
         needle = query.casefold()
         assets = [a for a in self.catalog.assets if (not category or a.category == category) and (not source or a.source == source)
                   and needle in ' '.join((a.id, a.name, a.category, a.consumer)).casefold()]
-        return dict(catalog_revision=self.catalog_revision, textures=[asset_summary(a) for a in assets[start:start + limit]],
+        return dict(catalog_revision=self.catalog_revision, textures=[dict(asset_summary(a), replacement=self.replacement_info(a.id)) for a in assets[start:start + limit]],
             total=len(assets), next_start=start + limit if start + limit < len(assets) else None,
             categories=sorted({a.category for a in self.catalog.assets}), sources=sorted(self.catalog.sources),
             notes=['Known consumers describe intended use. Original-script uses are static potential references, not proven runtime scenes.'])
 
-    def texture(self, identity, include_image=True, region=None, max_size=1024):
+    def replacement_info(self, identity):
+        from .textureassets import summary
+        return summary(self.replacements[identity]) if identity in self.replacements else None
+
+    def texture(self, identity, include_image=True, region=None, max_size=1024, view='current'):
         if identity not in self.catalog.by_id: raise ImageError('Unknown texture asset_id; call list_textures')
         asset = self.catalog.by_id[identity]
         result = dict(catalog_revision=self.catalog_revision, texture=asset_summary(asset), provenance=deepcopy(asset.chain),
+            view=view, replacement=self.replacement_info(identity),
             source_sha256=self.catalog.sources[asset.source]['sha256'], coordinates=dict(units='texture pixels', rectangle='[x,y,width,height]', origin='top-left'),
             guidance='Texture lettering is baked into pixels. UI text layers are separately exposed by get_ui_scene; do not assume OCR text is a script field.')
         if not include_image: return result
-        image = self.catalog.decode(identity); origin = (0, 0)
+        image = self.loader.resolver.image(identity) if view == 'current' else self.catalog.decode(identity); origin = (0, 0)
         if region is not None:
             x, y, w, h = region
             if min(x, y) < 0 or min(w, h) <= 0 or x + w > image.width() or y + h > image.height(): raise ImageError('Texture crop is outside original dimensions')
@@ -196,8 +207,11 @@ class VisualContext:
         if resolved.get('context_image'):
             composition.layers.insert(0, Layer('Chosen context backdrop', asset=resolved['context_image'], source=[0, 0, 960, 544], destination=[0, 0, 960, 544]))
         rows = layer_records(composition, self.catalog)
+        for row in rows:
+            if row['asset_id'] in self.replacements: row['replacement'] = self.replacement_info(row['asset_id'])
         font_asset = getattr(workspace.project, 'font_asset', None)
         basis = dict(catalog_revision=self.catalog_revision, project_revision=workspace.project.revision, family=family, state=resolved,
+                     texture_replacements={key: self.replacement_info(key) for key in self.replacements},
                      layout_sources=deepcopy(composition.sources), font_sources=self.font_sources,
                      font_asset_sha256=font_asset['manifest']['font_sha256'] if font_asset else None)
         identity = 'scene:' + fingerprint(basis)

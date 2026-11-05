@@ -459,6 +459,13 @@ class Window(QMainWindow):
         if rows:self.select_command(index)
         if self.workspace_tabs.currentIndex()==2:self.rebuild_file_flow()
         self.setWindowTitle('Saekano Script Studio — edited project'+(' *' if self.project.saved_revision!=self.project.revision else ''))
+        if self.image_panel:self.image_panel.set_project(self.project)
+
+    def textures_edited(self,previous_revision):
+        if self.preview_revision==previous_revision:self.preview_revision=self.project.revision
+        if self.image_panel:self.image_panel.set_project(self.project)
+        self.setWindowTitle('Saekano Script Studio — texture project'+(' *' if self.project.saved_revision!=self.project.revision else ''))
+        self.statusBar().showMessage('Project texture updated; save the project to keep it. Game files and scenario state unchanged.')
 
     def drop_text_template(self,row,opcode,after):
         if row>=0:
@@ -500,7 +507,10 @@ class Window(QMainWindow):
         except Exception as e:self.problem(str(e))
 
     def undo_edit(self,*_):
-        if self.project and self.project.undo_stack:self.project.undo();self.edited(self.script_id)
+        if self.project and self.project.undo_stack:
+            key,revision=self.project.scenario_key(),self.project.revision;self.project.undo()
+            if key==self.project.scenario_key():self.textures_edited(revision)
+            else:self.edited(self.script_id)
 
     def auto_fit_text(self):
         self.pause()
@@ -518,7 +528,10 @@ class Window(QMainWindow):
         except (ValueError,RuntimeError) as error:self.problem(str(error))
 
     def redo_edit(self,*_):
-        if self.project and self.project.redo_stack:self.project.redo();self.edited(self.script_id)
+        if self.project and self.project.redo_stack:
+            key,revision=self.project.scenario_key(),self.project.revision;self.project.redo()
+            if key==self.project.scenario_key():self.textures_edited(revision)
+            else:self.edited(self.script_id)
 
     def navigate_diagnostic(self,item):
         diagnostic=item.data(Qt.UserRole)
@@ -873,6 +886,7 @@ class Window(QMainWindow):
             from .imageview import ImageBrowser
             self.image_panel=ImageBrowser(self)
             self.image_panel.commandPicked.connect(self.inspect_image_use)
+            self.image_panel.texturesChanged.connect(self.textures_edited)
         selected=self.table.currentIndex()
         command=self.commands[self.proxy.mapToSource(selected).row()] if selected.isValid() and self.commands else None
         sample=command if command and command['opcode']==0x64 else next((c for c in self.commands if c['opcode']==0x64),None)
@@ -907,6 +921,7 @@ class Window(QMainWindow):
         examples['backlog']='\n'.join(retained)
         self.image_panel.set_source(self.session.root,self.session.descriptions,self.session.text,
                                     sample['args']['text'] if sample else '',sample['args']['speaker'] if sample else -1,examples)
+        self.image_panel.set_project(self.project)
         self.image_panel.show();self.image_panel.raise_();self.image_panel.activateWindow()
 
     def inspect_image_use(self,script,original_index):

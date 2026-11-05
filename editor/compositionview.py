@@ -25,6 +25,7 @@ class CompositionBrowser(QDialog):
         self.catalog = None; self.library = None; self.font = None; self.font_consumer = None; self.loader = None
         self.job = None; self.pending = None; self.generation = 0; self.composition = None
         self.parameters = {}; self.family_text = {}; self.last_family = None
+        self.replacements = {}
         outer = QVBoxLayout(self)
         note = QLabel('Preview UI layouts with current assets. Controls change this snapshot only; game/project state is untouched.')
         note.setWordWrap(True); outer.addWidget(note)
@@ -48,6 +49,8 @@ class CompositionBrowser(QDialog):
         self.auto = QCheckBox('Auto active'); self.cursor = QCheckBox('Advance cursor'); self.cursor.setChecked(True)
         for control in (self.press_start, self.skip, self.auto, self.cursor): form.addRow(control)
         self.backdrop = QComboBox(); form.addRow('Context backdrop', self.backdrop)
+        self.original = QCheckBox('Use original textures'); form.addRow(self.original)
+        self.original.toggled.connect(lambda: self.set_replacements(self.replacements))
         self.text = QPlainTextEdit(); self.text.setPlaceholderText('Preview text; never modifies script text'); self.text.setMaximumHeight(150); form.addRow('Sample text', self.text)
         self.extra_host = QWidget(); self.extra_form = QFormLayout(self.extra_host); self.extra_form.setContentsMargins(0, 0, 0, 0); form.addRow(self.extra_host)
         buttons = QHBoxLayout(); refresh = QPushButton('Refresh layouts'); refresh.clicked.connect(self.refresh)
@@ -77,10 +80,11 @@ class CompositionBrowser(QDialog):
         for check in (self.press_start, self.skip, self.auto, self.cursor): check.toggled.connect(self.changed)
         self.backdrop.currentIndexChanged.connect(self.changed); self.text.textChanged.connect(self.changed)
 
-    def set_context(self, catalog, font, sample_text='', focus=None, sample_speaker=-1, samples=None):
+    def set_context(self, catalog, font, sample_text='', focus=None, sample_speaker=-1, samples=None, replacements=None):
         self.invalidate()
         self.catalog = catalog; self.font = font; self.font_consumer = FontConsumer(font) if font else None
-        self.library = EnvironmentLibrary(catalog.root, catalog=catalog); self.loader = TextureLoader(AssetResolver(catalog))
+        self.replacements = dict(replacements or {})
+        self.library = EnvironmentLibrary(catalog.root, catalog=catalog); self.loader = TextureLoader(AssetResolver(catalog, {} if self.original.isChecked() else self.replacements))
         self.backdrop.blockSignals(True); self.backdrop.clear(); self.backdrop.addItem('Neutral matte', None)
         for a in catalog.assets:
             if a.source == 'resource.dat' and len(a.route) == 2 and a.route[0] in (5, 9) and a.status == 'Ready':
@@ -108,6 +112,14 @@ class CompositionBrowser(QDialog):
             if bank == 13 and 25 <= focus.route[-1] <= 61: key = 'settings'
             if bank == 1 and 41 <= focus.route[-1] <= 49: self.speaker.setValue(focus.route[-1] - 41)
         self.family.setCurrentIndex(self.family.findData(key)); self.configure_family(); self.timer.stop(); self.rebuild()
+
+    def set_replacements(self, replacements, font=None):
+        self.replacements = dict(replacements)
+        if font is not None:self.font = font
+        if not self.catalog:return
+        self.loader = TextureLoader(AssetResolver(self.catalog, {} if self.original.isChecked() else replacements))
+        self.font_consumer = FontConsumer(self.font) if self.font else None
+        self.rebuild()
 
     def configure_family(self, *_):
         key = self.family.currentData()

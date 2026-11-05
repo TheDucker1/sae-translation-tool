@@ -1,4 +1,4 @@
-"""Nonmodal, read-only image browser. Pixels are decoded only on selection."""
+"""Nonmodal source browser and project PNG replacements; originals stay read-only."""
 from collections import OrderedDict
 import json
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QThread, Signal, QRectF
@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabe
     QGraphicsScene, QFileDialog, QMessageBox, QCheckBox)
 from .imageassets import build_catalog, extract_images
 from .imagecodec import ImageCancelled
+from .compositionrender import AssetResolver
 
 
 class ImageJob(QThread):
@@ -30,10 +31,10 @@ class ImageJob(QThread):
 
 
 class ImagesModel(QAbstractTableModel):
-    HEADERS = ('Image', 'Category', 'Dimensions', 'Format / order', 'Uses', 'Source / member indices', 'Status')
+    HEADERS = ('Image', 'Category', 'Dimensions', 'Original format / order', 'Uses', 'Source / member indices', 'Status')
 
     def __init__(self, parent=None):
-        super().__init__(parent); self.assets = []
+        super().__init__(parent); self.assets = []; self.replacements = {}
 
     def replace(self, assets):
         self.beginResetModel(); self.assets = assets; self.endResetModel()
@@ -53,7 +54,7 @@ class ImagesModel(QAbstractTableModel):
         a = self.assets[index.row()]
         if role == Qt.DisplayRole:
             return (a.name.strip(), a.category, f'{a.width} × {a.height}' if a.width else '—',
-                    f'{a.format} {a.order}', len(a.references), a.location, a.status)[index.column()]
+                    f'{a.format} {a.order}', len(a.references), a.location, 'Project PNG' if a.id in self.replacements else a.status)[index.column()]
         if role == Qt.ToolTipRole:
             return a.error or f'{a.id}\n{a.consumer}'
         if role == Qt.UserRole:
@@ -121,13 +122,15 @@ class ImageCanvas(QGraphicsView):
 
 class ImageBrowser(QDialog):
     commandPicked = Signal(int, int)
+    texturesChanged = Signal(str)
 
     def __init__(self, parent=None):
-        super().__init__(parent); self.setWindowTitle('Image assets — read-only'); self.resize(1430, 900)
+        super().__init__(parent); self.setWindowTitle('Image assets — project PNG replacements'); self.resize(1430, 900)
         self.setModal(False); self.catalog = None; self.source = None; self.descriptions = {}
         self.generation = 0; self.job = None; self.job_kind = None; self.pending = None; self.deferred_decode = None
         self.selected_id = None; self.cache = OrderedDict(); self.cache_bytes = 0
         self.composition_panel = None; self.font = None; self.sample_text = ''; self.sample_speaker = -1; self.samples = {}
+        self.project = None; self.replacements = {}; self.project_key = None
         outer = QVBoxLayout(self)
         top = QHBoxLayout(); self.search = QLineEdit(); self.search.setPlaceholderText('Search image, location, use or script:000…')
         self.search.textChanged.connect(self.refilter); top.addWidget(self.search, 3)
@@ -154,6 +157,7 @@ class ImageBrowser(QDialog):
         preview = QWidget(); pl = QVBoxLayout(preview); pl.setContentsMargins(0, 0, 0, 0)
         bar = QHBoxLayout(); self.image_note = QLabel('Select an image.'); bar.addWidget(self.image_note, 1)
         self.canvas = ImageCanvas()
+        self.original = QCheckBox('Original pixels'); self.original.toggled.connect(self.refresh_pixels); bar.addWidget(self.original)
         for label, action in [('Fit', self.canvas.fit), ('1:1', self.canvas.actual), ('−', lambda: self.canvas.zoom(1 / 1.25)), ('+', lambda: self.canvas.zoom(1.25))]:
             button = QPushButton(label); button.clicked.connect(action); bar.addWidget(button)
         pl.addLayout(bar); pl.addWidget(self.canvas, 1); bottom.addWidget(preview)
@@ -165,7 +169,10 @@ class ImageBrowser(QDialog):
         foot = QHBoxLayout(); self.mode = QComboBox(); self.mode.addItem('Original bytes + PNG', 'both'); self.mode.addItem('Original bytes only', 'raw'); self.mode.addItem('PNG only', 'png'); foot.addWidget(self.mode)
         self.extract_selected = QPushButton('Extract selected…'); self.extract_selected.clicked.connect(lambda: self.extract(False)); foot.addWidget(self.extract_selected)
         self.extract_filtered = QPushButton('Extract filtered list…'); self.extract_filtered.clicked.connect(lambda: self.extract(True)); foot.addWidget(self.extract_filtered)
-        foot.addStretch(); foot.addWidget(QLabel('Textures only · no image editing or reinjection'))
+        self.import_png = QPushButton('Import PNG…'); self.import_png.clicked.connect(self.import_replacement); foot.addWidget(self.import_png)
+        self.revert_png = QPushButton('Revert PNG'); self.revert_png.clicked.connect(self.revert_replacement); foot.addWidget(self.revert_png)
+        self.save_png = QPushButton('Save viewed PNG…'); self.save_png.clicked.connect(self.save_viewed_png); foot.addWidget(self.save_png)
+        foot.addStretch(); foot.addWidget(QLabel('Project only · extraction uses originals · no game reinjection'))
         close = QPushButton('Close'); close.clicked.connect(self.close); foot.addWidget(close); outer.addLayout(foot)
         self.update_buttons()
 
@@ -177,6 +184,28 @@ class ImageBrowser(QDialog):
             try: self.catalog.verify(); return
             except (ValueError, OSError): pass
         self.source = root; self.descriptions = descriptions; self.rebuild()
+
+    def set_project(self, project):
+        self.project = project; self.replacements = dict(project.texture_assets) if project else {}
+        key = (tuple((name, value['png_sha256']) for name, value in sorted(self.replacements.items())), id(project.font_asset) if project else None)
+        self.model.replacements = self.replacements
+        if key == self.project_key:self.update_buttons();return
+        self.project_key = key
+        if project and self.font:
+            from .fontpatch import effective_font
+            self.font = effective_font(project, self.font)
+        self.refresh_pixels()
+        if self.composition_panel:self.composition_panel.set_replacements(self.replacements, self.font)
+
+    def refresh_pixels(self, *_):
+        self.cache.clear(); self.cache_bytes = 0
+        if self.job_kind not in ('index', 'extract'):
+            self.generation += 1; self.pending = None; self.deferred_decode = None
+            if self.job:self.job.requestInterruption()
+        self.model.dataChanged.emit(self.model.index(0, 0), self.model.index(max(0, self.model.rowCount()-1), 6))
+        self.selected_id = None
+        if self.catalog:self.select_image()
+        self.update_buttons()
 
     def invalidate(self):
         if self.composition_panel:self.composition_panel.invalidate()
@@ -269,6 +298,10 @@ class ImageBrowser(QDialog):
         enabled = self.catalog is not None and self.job_kind != 'index' and not extracting
         self.extract_selected.setEnabled(enabled); self.extract_filtered.setEnabled(enabled)
         self.compose_button.setEnabled(self.catalog is not None)
+        ready = enabled and self.selected_id in self.catalog.by_id if self.catalog else False
+        self.import_png.setEnabled(ready and self.catalog.by_id[self.selected_id].status == 'Ready')
+        self.revert_png.setEnabled(ready and self.selected_id in self.replacements)
+        self.save_png.setEnabled(ready)
 
     def refilter(self, *_):
         self.proxy.beginFilterChange()
@@ -286,6 +319,7 @@ class ImageBrowser(QDialog):
         key = index.data(Qt.UserRole)
         if key == self.selected_id: return
         self.selected_id = key; asset = self.catalog.by_id[key]
+        self.update_buttons()
         self.canvas.clear(); self.image_note.setText('Decoding ' + asset.name.strip() + '…')
         chain = '\n\n'.join(
             f"[{step['index']}] {step['name']}\n"
@@ -300,6 +334,9 @@ class ImageBrowser(QDialog):
             f'Source: {asset.source}\n{chain}\n\n'
             'Nested offsets are relative to each decoded parent, not absolute source-file offsets.\n'
             'Names retain original spaces. Static uses refer to original scripts; dynamic and native uses may be indirect.')
+        if key in self.replacements:
+            from .textureassets import summary
+            self.details.appendPlainText('\n\nProject PNG replacement (saved inside editor project):\n' + json.dumps(summary(self.replacements[key]), indent=2))
         self.regions.clear(); self.uses.clear()
         item = QListWidgetItem('Whole texture'); item.setData(Qt.UserRole, None); self.regions.addItem(item)
         for region in asset.regions:
@@ -316,8 +353,45 @@ class ImageBrowser(QDialog):
         if key in self.cache:
             self.cache.move_to_end(key); self.canvas.display(self.cache[key]); self.image_note.setText(f'{asset.width} × {asset.height} · wheel to zoom, drag to pan')
         else:
-            catalog = self.catalog
-            self.enqueue('decode', key, lambda progress, cancel: catalog.decode(key, cancel))
+            resolver = AssetResolver(self.catalog, {} if self.original.isChecked() else self.replacements)
+            self.enqueue('decode', key, lambda progress, cancel: resolver.image(key, cancel))
+
+    def editable_project(self):
+        owner = self.parent()
+        if owner and hasattr(owner, 'ensure_project'):
+            if not owner.ensure_project():return None
+            self.set_project(owner.project)
+        return self.project
+
+    def import_replacement(self):
+        project = self.editable_project()
+        if not project or not self.selected_id:return
+        revision, identity = project.revision, self.selected_id
+        path, _ = QFileDialog.getOpenFileName(self, 'Import same-size lossless PNG into project', '', 'PNG (*.png)')
+        if not path:return
+        try:
+            if self.project is not project or project.revision != revision:raise ValueError('Project changed during import; retry')
+            from .textureassets import read_png
+            if project.set_texture(identity, read_png(path), self.catalog):self.texturesChanged.emit(revision);self.set_project(project)
+        except (ValueError, OSError) as error:QMessageBox.warning(self, 'PNG import', str(error))
+
+    def revert_replacement(self):
+        project = self.editable_project()
+        if not project or not self.selected_id:return
+        revision = project.revision
+        try:project.remove_texture(self.selected_id);self.texturesChanged.emit(revision);self.set_project(project)
+        except (ValueError, OSError) as error:QMessageBox.warning(self, 'Revert PNG', str(error))
+
+    def save_viewed_png(self):
+        if not self.catalog or not self.selected_id:return
+        from .textureassets import png_bytes, encode_png, write_png
+        identity = self.selected_id; replacement = self.replacements.get(identity) if not self.original.isChecked() else None
+        path, _ = QFileDialog.getSaveFileName(self, 'Write PNG copy to a NEW file', '', 'PNG (*.png)')
+        if not path:return
+        try:
+            data = png_bytes(replacement) if replacement else encode_png(self.catalog.decode(identity))
+            write_png(path, data, self.catalog.root);self.note.setText('PNG copy saved. Original game files unchanged.')
+        except (ValueError, OSError) as error:QMessageBox.warning(self, 'Save PNG', str(error))
 
     def show_region(self, item, *_):
         region = item.data(Qt.UserRole) if item else None
@@ -353,7 +427,7 @@ class ImageBrowser(QDialog):
             self.composition_panel=CompositionBrowser(self)
             self.composition_panel.assetPicked.connect(self.focus_asset)
         focus=self.catalog.by_id.get(self.selected_id)
-        self.composition_panel.set_context(self.catalog,self.font,self.sample_text,focus,self.sample_speaker,self.samples)
+        self.composition_panel.set_context(self.catalog,self.font,self.sample_text,focus,self.sample_speaker,self.samples,self.replacements)
         self.composition_panel.show();self.composition_panel.raise_();self.composition_panel.activateWindow()
 
     def focus_asset(self,identity):

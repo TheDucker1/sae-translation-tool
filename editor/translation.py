@@ -185,6 +185,7 @@ class TranslationWorkspace:
                     for name,value in fields(c).items():total+=1;modified+=old.get(name)!=value
             self._cache[key]=dict(scripts=len(self.project.scripts),text_fields=total,modified_text_fields=modified)
         return dict(revision=self.project.revision,unsaved=self.project.saved_revision!=self.project.revision,
+                    texture_replacement_count=len(getattr(self.project,'texture_assets',{})),
                     font_asset={k:self.project.font_asset['manifest'].get(k) for k in ('format','font_sha256','source_sha256','generator_revision')} if self.project.font_asset else None,
                     project_file=self.project_file,profile=deepcopy(self.profile),context_revision=self.context_revision(),**self._cache[key],
                     preview_current=self._preview_revision==self.project.revision,
@@ -213,9 +214,37 @@ class TranslationWorkspace:
     @locked
     def get_texture(self,asset_id:Id,include_image:bool=True,region:PixelRect|None=None,
                     max_size:Annotated[int,Field(ge=64,le=2048,strict=True)]=1024,
-                    expected_catalog_revision:Id|None=None)->dict[str,Any]:
-        """Get a texture image plus source/member provenance and original dimensions. region=[x,y,w,h] is an in-bounds texture-pixel crop. PNG is a native MCP image block."""
-        return self.visual_context(expected_catalog_revision).texture(asset_id,include_image,region,max_size)
+                    expected_catalog_revision:Id|None=None,view:Literal['current','original']='current')->dict[str,Any]:
+        """Get current project pixels (default) or view=original, plus source provenance and replacement metadata. region=[x,y,w,h] is an in-bounds crop. PNG is a native MCP image block."""
+        return self.visual_context(expected_catalog_revision).texture(asset_id,include_image,region,max_size,view)
+
+    @locked
+    def import_texture_png(self,asset_id:Id,filename:Annotated[str,Field(min_length=1,max_length=240)],expected_revision:Id,
+                           expected_png_sha256:Id|None=None,expected_catalog_revision:Id|None=None)->dict[str,Any]:
+        """Import a same-size lossless <=8-bit PNG from a workspace-relative file as a project texture replacement. Atomic Undo/revision; no game/GXT export. Exact PNG bytes retained in the saved project."""
+        from .textureassets import read_png,sha,summary
+        self.check_revision(expected_revision);context=self.visual_context(expected_catalog_revision);data=read_png(self.path(filename))
+        if expected_png_sha256 is not None and sha(data)!=expected_png_sha256:raise ValueError('PNG file checksum changed; inspect the current file and retry')
+        previous=self.project.revision;changed=self.project.set_texture(asset_id,data,context.catalog)
+        self._cache={}
+        if self._preview_revision==previous:self._preview_revision=self.project.revision
+        return dict(revision=self.project.revision,asset_id=asset_id,changed=changed,replacement=summary(self.project.texture_assets[asset_id]),scope='project only; game texture export is not implemented')
+
+    @locked
+    def remove_texture_replacement(self,asset_id:Id,expected_revision:Id)->dict[str,Any]:
+        """Revert one project texture to its original pixels as an Undo transaction. Original files and saved projects are untouched until Save."""
+        self.check_revision(expected_revision);previous=self.project.revision;self.project.remove_texture(asset_id);self._cache={}
+        if self._preview_revision==previous:self._preview_revision=self.project.revision
+        return dict(revision=self.project.revision,asset_id=asset_id,removed=True)
+
+    @locked
+    def write_texture_png(self,asset_id:Id,filename:Annotated[str,Field(min_length=1,max_length=240)],expected_revision:Id,
+                          view:Literal['current','original']='current')->dict[str,Any]:
+        """Write a separate new workspace-relative PNG for external image editing. Never overwrite files. Current replacement bytes are copied exactly; original GXT pixels are decoded losslessly. No project/game changes."""
+        from .textureassets import png_bytes,encode_png,write_png
+        self.check_revision(expected_revision);context=self.visual_context()
+        data=png_bytes(context.replacements[asset_id]) if view=='current' and asset_id in context.replacements else encode_png(context.catalog.decode(asset_id))
+        return dict(revision=self.project.revision,asset_id=asset_id,view=view,**write_png(self.path(filename),data,self.project.root))
 
     @locked
     def get_texture_usage(self,asset_id:Id,kind:Literal['atlas_regions','script_uses']='atlas_regions',
@@ -466,13 +495,15 @@ class TranslationWorkspace:
     @locked
     def undo(self,expected_revision:Id)->dict[str,Any]:
         """Undo one accepted text/structural batch, keeping originals and on-disk projects untouched until Save."""
-        self.check_revision(expected_revision);self.project.undo();self._cache={};self._preview_revision=None
+        self.check_revision(expected_revision);key=self.project.scenario_key();current=self._preview_revision==self.project.revision
+        self.project.undo();self._cache={};self._preview_revision=self.project.revision if current and key==self.project.scenario_key() else None
         return dict(revision=self.project.revision,can_undo=bool(self.project.undo_stack),can_redo=bool(self.project.redo_stack))
 
     @locked
     def redo(self,expected_revision:Id)->dict[str,Any]:
         """Redo one previously undone batch; never silently reapply a stale revision."""
-        self.check_revision(expected_revision);self.project.redo();self._cache={};self._preview_revision=None
+        self.check_revision(expected_revision);key=self.project.scenario_key();current=self._preview_revision==self.project.revision
+        self.project.redo();self._cache={};self._preview_revision=self.project.revision if current and key==self.project.scenario_key() else None
         return dict(revision=self.project.revision,can_undo=bool(self.project.undo_stack),can_redo=bool(self.project.redo_stack))
 
     def check_disk(self,path):

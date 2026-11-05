@@ -1,4 +1,4 @@
-# Read-only image browser
+# Image assets and project PNG replacements
 
 Restart **Launch.cmd**, load your USRDIR, then choose **Images…**. Existing setup
 is sufficient; this feature adds no packages or native build requirement.
@@ -74,8 +74,9 @@ it is not a replay of native animation timing.
 Select a layer to outline its destination and inspect its asset identity,
 source crop, position, tint and rotation. Double-click a texture layer to locate
 it in the individual-image browser. Layouts keep texture identities separate from
-pixels so future replacement previews can resolve the same identities; replacement
-editing/import/reinjection is not available yet.
+pixels. Project PNG replacements resolve those same identities in the texture
+browser and compositions; original/current comparison does not alter the layout.
+Game reinjection is not available yet.
 
 **UI families** records coverage and limitations for all twelve implemented screen
 families. These include variants, rather than every story scene. Ending prompts
@@ -148,7 +149,42 @@ instead of silently dropping it.
 GXT texture. It is not a cropped sprite or an entire archive. `manifest.json`
 records source hashes, member chains, storage offsets/extents, image hashes,
 known uses/regions and output filenames. Keep it with the extraction for future
-asset tooling. There is no image import, editing or reinjection in this version.
+asset tooling. Extraction always uses original game pixels/bytes, even when the
+project has replacements. Use the PNG authoring controls below for current pixels.
+
+## Import edited PNGs into the project
+
+1. Select a texture and choose **Save viewed PNG…** to create a separate new PNG.
+   With **Original pixels** checked it uses original pixels; otherwise it uses
+   the project replacement, if present. Existing files are never overwritten.
+2. Edit that PNG externally, keeping its original dimensions. Preserve transparency
+   and use8-bit color; the tool rejects16-bit PNG rather than reducing precision.
+3. Choose **Import PNG…**. The replacement appears as **Project PNG** in the table
+   and is used by UI compositions. **Original pixels** compares the individual
+   texture; **Use original textures** compares a whole composition.
+4. **Save project** retains the PNG inside the normal `.saekano.json` file. Moving
+   or deleting the external editing PNG afterwards does not break that project.
+   **Revert PNG** removes the override; the editor's Undo/Redo includes both import
+   and revert, alongside normal text/font edits.
+
+PNG bytes and decoded straight RGBA pixels are preserved, including partial alpha
+and RGB values under fully transparent pixels. Original GXT palette/swizzle/storage
+metadata stays in the provenance; a PNG is not a byte-identical GXT container.
+This stage stores PNG project deltas and does not encode/reinject GXT or write game
+archives. Game export rejects a project containing texture replacements before
+writing output, so those changes cannot be silently omitted.
+
+Atlas crops/positions/metrics remain unchanged, hence the exact-dimension rule.
+Original font-atlas replacements also affect cached bitmap glyphs in composition
+previews; font generation and text metrics remain separate. There is no built-in
+pixel-painting canvas. Animated PNG is rejected. Individual PNGs are limited to
+32MiB, with128MiB total compressed PNG data and4096 replacements per project.
+
+Projects with textures use format version2; old version1 projects still load.
+Reopening checks original asset identity/file/member hashes, PNG checksums,
+dimensions and decoded pixels. A modified/mismatched source rejects the project
+rather than attaching pixels to another texture. Texture-only changes refresh
+image/composition caches without restarting the scenario simulator.
 
 ## Coverage limits
 
@@ -174,3 +210,7 @@ and a text-only filter. See the [tool guide](TRANSLATOR_GUIDE.md) for coordinate
 state and snapshot rules. These calls do not change the GUI/project or write files;
 extraction remains a separate GUI action. Extracted assets, manifests and private
 inventories are local data and should not be published with the tool.
+For agent authoring, write_texture_png creates a separate workspace PNG;
+import_texture_png stores the edited file in the project, and
+remove_texture_replacement reverts it. All writes require the current project
+revision; the same Save/Undo/preview behavior applies in standalone and live GUI.

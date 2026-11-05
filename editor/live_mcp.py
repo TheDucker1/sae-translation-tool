@@ -148,7 +148,7 @@ class GuiWorkspace(TranslationWorkspace):
         if write and (QApplication.activeModalWidget() is not None or w.export_worker is not None or not w.centralWidget().isEnabled()):
             raise ValueError('GUI busy with a dialog/loading/export; request rejected without changes. Retry after it finishes.')
         if name in PREVIEW_WRITES and w.playing:raise ValueError('Shared preview is playing; call pause_preview, then use its state_revision')
-        previous=self.project;revision=previous.revision;sid=w.script_id
+        previous=self.project;revision=previous.revision;scenario=previous.scenario_key();sid=w.script_id
         result=fn(*args,**kwargs)
         if self.project is not previous or self.project.revision!=revision:
             w.project=self.project
@@ -156,7 +156,9 @@ class GuiWorkspace(TranslationWorkspace):
             if changed:sid=changed[0]['script_id']
             uid=changed[0]['command_id'] if changed else None
             if sid not in self.project.scripts:sid=min(self.project.scripts)
-            w.edited(sid,uid,known_valid=name in {'apply_translations','apply_text_cleanup','edit_commands','load_project'});self._cache={}
+            if self.project.scenario_key()==scenario:w.textures_edited(revision)
+            else:w.edited(sid,uid,known_valid=name in {'apply_translations','apply_text_cleanup','edit_commands','load_project'})
+            self._cache={}
             w.statusBar().showMessage('Agent '+name+' applied to the live project; shared Undo is available.')
         elif name.startswith('preview_') and name!='preview_view':
             if name=='preview_start':w.routes=RouteBook();w.rewind_points=[0]

@@ -22,6 +22,7 @@ Run the affected module, for example:
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_composition_modes -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_composition_battle -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_visual_mcp -v
+.\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_texture_projects -v
 ```
 
 Translator/MCP checks require `requirements-mcp.txt`. Run a focused check when
@@ -45,3 +46,6 @@ and text advance extents from the rasterized glyph rectangles used to draw them.
 Visual MCP checks cover native image blocks with separate structured geometry,
 offscreen/text/glyph/filter paging and strict state/stale-snapshot handling. They
 require optional MCP dependencies and working local sockets for Python asyncio.
+Texture project checks use tiny PNG/GXT fixtures for exact transparent RGBA/PNG
+bytes, save/reopen/Undo, corrupt/mismatched inputs, bitmap-atlas cache refresh and
+the project-only game-export guard. No original game assets are required.

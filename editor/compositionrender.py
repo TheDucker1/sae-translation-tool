@@ -9,10 +9,13 @@ from .composition import Composition, walk_layers
 
 class AssetResolver:
     """Layouts retain asset identities. Future replacement providers use this seam."""
-    def __init__(self, catalog):
-        self.catalog = catalog
+    def __init__(self, catalog, replacements=None):
+        self.catalog = catalog; self.replacements = dict(replacements or {})
 
     def image(self, identity, cancelled=None):
+        if identity in self.replacements:
+            from .textureassets import replacement_image
+            self.catalog.verify(); return replacement_image(self.replacements[identity], cancelled)
         return self.catalog.decode(identity, cancelled)
 
 
@@ -24,8 +27,11 @@ class TextureLoader:
     def load(self, composition, progress=None, cancelled=None):
         textures, errors, total = {}, [], 0
         self.resolver.catalog.verify()
-        for identity in dict.fromkeys(layer.asset for layer in walk_layers(composition.layers)
-                                      if layer.asset and not layer.asset.startswith('@target:') and (layer.rgba[3] or layer.blend == 'multiply')):
+        layers = list(walk_layers(composition.layers))
+        identities = [layer.asset for layer in layers if layer.asset and not layer.asset.startswith('@target:') and (layer.rgba[3] or layer.blend == 'multiply')]
+        if any(layer.kind == 'text' for layer in layers):
+            identities.extend(key for key in self.resolver.replacements if key.startswith('Font.gsf:'))
+        for identity in dict.fromkeys(identities):
             checkpoint(cancelled)
             if progress: progress('Loading composition texture ' + identity)
             try:
@@ -82,12 +88,22 @@ def clamped_crop(image, x, y, width, height):
 
 class FontConsumer:
     def __init__(self, font):
-        self.font = font; self.cache = OrderedDict()
+        self.font = font; self.cache = OrderedDict(); self.atlases = {}; self.atlas_key = ()
+
+    def set_atlases(self, textures):
+        atlases = {key: image for key, image in textures.items() if key.startswith('Font.gsf:')}
+        key = tuple((name, image.cacheKey()) for name, image in sorted(atlases.items()))
+        if key != self.atlas_key: self.cache.clear(); self.atlases = atlases; self.atlas_key = key
 
     def glyph(self, code, rgb):
         key = (code, tuple(rgb))
         if key in self.cache:
             self.cache.move_to_end(key); return self.cache[key]
+        cached = self.font.cached.get(chr(code)); atlas = self.atlases.get('Font.gsf:' + str(cached[0])) if cached else None
+        if atlas is not None:
+            _, x, y, width, _ = cached
+            if x<0 or y<0 or x+width>atlas.width() or y+self.font.bitmap_height>atlas.height():raise ImageError('Bitmap glyph lies outside project font atlas')
+            return self._remember(key, tint_image(atlas.copy(x, y, width, self.font.bitmap_height), rgb))
         data = self.font.glyph(code)
         if data.get('missing'): return None
         image = QImage(bytes.fromhex(data['rgba']), data['width'], data['height'],
@@ -97,15 +113,18 @@ class FontConsumer:
         else:
             p = QPainter(image); p.setCompositionMode(QPainter.CompositionMode_SourceIn)
             p.fillRect(image.rect(), QColor(*rgb)); p.end()
+        return self._remember(key, image)
+
+    def _remember(self, key, image):
         while len(self.cache) >= 512: self.cache.popitem(last=False)
-        self.cache[key] = image
-        return image
+        self.cache[key] = image; return image
 
 
 def render_composition(composition, textures, font_consumer=None, *, _targets=None, _depth=0):
     """Normal UI source-over quads, crop/flip, RGB multiply, opacity and pivot rotation."""
     if _depth > 4: raise ImageError('Composition target nesting exceeds budget')
     targets = {} if _targets is None else _targets
+    if not _depth and font_consumer is not None: font_consumer.set_atlases(textures)
     frame = QImage(960, 544, QImage.Format_RGBA8888); frame.fill(QColor(*composition.clear))
     p = QPainter(frame); p.setRenderHint(QPainter.SmoothPixmapTransform, True)
     issues = []

@@ -86,6 +86,7 @@ def history_tables(project,first,changed):
 
 def prepare_archives(project,source=None,progress=None,cancelled=None):
     """Pure preparation: no output writes; returns patched pair and a report."""
+    if getattr(project,'texture_assets',None):raise ExportError('Texture replacements are project-only; game texture export is not implemented yet. No export written.')
     checkpoint(progress,cancelled,'Validating project and source scripts…')
     issues=project.validate()
     if issues:
@@ -155,6 +156,7 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
 
 
 def export_game(project,destination,progress=None,cancelled=None):
+    if getattr(project,'texture_assets',None):raise ExportError('Texture replacements are project-only; game texture export is not implemented yet. No export written.')
     source=Path(project.root).resolve();destination=Path(destination).expanduser().resolve()
     if not project.root or not source.is_dir():raise ExportError('Project has no valid original USRDIR')
     if destination==source or destination.is_relative_to(source) or source.is_relative_to(destination):raise ExportError('Export folder must be separate from original USRDIR')
