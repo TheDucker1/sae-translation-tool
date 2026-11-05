@@ -121,6 +121,11 @@ An agent should begin with `get_translation_guide` and `get_status`, or the
 `translate_script` prompt. Tools expose readable dialogue flow, opcode help,
 original/current text, reference-aware edits, validation, preview and explicit
 save/export. No model service or API key is built in.
+Visual tools also expose textures and all supported UI compositions as native MCP
+images plus structured geometry, layer/pass order, asset provenance and text.
+Start with `list_textures` or `list_ui_scenes`, then `describe_ui_scene` and
+`get_ui_scene`. `get_ui_scene_layers(kind="text")` reads UI strings/styles directly.
+These calls inspect snapshots without changing the human's GUI or project.
 See the [translator/tool guide](docs/TRANSLATOR_GUIDE.md).
 
 ## Development

@@ -5,15 +5,20 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from .translation import GUIDE,TranslationWorkspace
+from .visualcontext import protocol_image
 
+VISUAL_TOOLS=('list_textures','get_texture','get_texture_usage','list_ui_scenes','describe_ui_scene','get_ui_scene','get_ui_scene_layers')
 READ_TOOLS=('get_translation_guide','get_status','list_scripts','get_dialogue_flow','list_commands','get_context','search_text','list_opcodes',
-            'get_script_flow','get_file_links','opcode_help','command_template','format_text','analyze_text_cleanup','get_text_cleanup_plan','validate_project','preview_view')
+            'get_script_flow','get_file_links','opcode_help','command_template','format_text','analyze_text_cleanup','get_text_cleanup_plan','validate_project','preview_view')+VISUAL_TOOLS
 WRITE_TOOLS=('configure_translation','apply_translations','apply_text_cleanup','edit_commands','undo','redo','save_project','load_project',
              'export_game_copy','preview_start','preview_step','preview_run','preview_rewind','preview_debug')
 
 INSTRUCTIONS='''This is the Saekano translation editor, exposed through the same Python project and scenario model as its GUI.
 First call get_translation_guide and get_status. Read get_dialogue_flow for speaker/text/choices/branches/state; image/audio/actor commands are compact inspectable cues.
 Use list_opcodes to search the human editor's reference and opcode_help for full command/argument rules when needed.
+For image/UI context use list_textures/get_texture/get_texture_usage and list_ui_scenes/describe_ui_scene/get_ui_scene/get_ui_scene_layers.
+Texture/scene tools return native MCP image content plus structured metadata. Scene layers distinguish text from baked texture lettering and report original pixel geometry, order/pass/targets/masks and source IDs. Page layers; request glyphs only when needed.
+Scene snapshots are static supported UI layouts with explicit preview state, not recovered story scenes or evidence of native execution. Supply translated text from get_context through the described state fields. Read coverage/diagnostics; never infer missing actors, media or runtime state. Stale snapshot/catalog requests require fresh discovery.
 Fetch original/current fields through get_context before editing. Raw command arguments are optional with details=true.
 Preserve native control tokens and non-text semantics. Use stable command IDs, exact expected_text and expected_revision.
 Apply small atomic translation batches; structural editing is separate. Stale/invalid edits are rejected without partial changes.
@@ -29,7 +34,7 @@ The connection mode is stated below; follow its project/preview concurrency rule
 def tool_handler(fn,invoke=None):
     @wraps(fn)
     def handle(*args,**kwargs):
-        try:return invoke(fn,args,kwargs) if invoke else fn(*args,**kwargs)
+        try:return protocol_image(invoke(fn,args,kwargs) if invoke else fn(*args,**kwargs))
         except (ValueError,OSError,RuntimeError,KeyError,IndexError,TypeError) as error:
             raise ToolError(str(error)) from error
     return handle
@@ -38,7 +43,7 @@ def tool_handler(fn,invoke=None):
 def create_server(workspace:TranslationWorkspace,invoke=None):
     live=getattr(workspace,'live',False)
     mode=('LIVE GUI: same in-memory project and preview as the human. get_status reports GUI selection/playback/state_revision/context_revision. Pause playback with pause_preview, then pass expected_state_revision for preview/navigation writes. Project edits require expected_revision; configure_translation requires expected_context_revision. Busy dialogs/export and stale requests reject; refresh status/context and retry. focus_command selects inspection without splicing VM state.' if live else 'STANDALONE: one process owns one in-memory project; hand off saved files to the GUI, not concurrent live editing.')
-    server=MCPServer('Saekano Translator',version='1.1',instructions=INSTRUCTIONS+'\n'+mode,log_level='WARNING')
+    server=MCPServer('Saekano Translator',version='1.2',instructions=INSTRUCTIONS+'\n'+mode,log_level='WARNING')
     def call(fn,*args,**kwargs):return invoke(fn,args,kwargs) if invoke else fn(*args,**kwargs)
     extra=('pause_preview','focus_command') if live else ()
     for name in READ_TOOLS+WRITE_TOOLS+extra:

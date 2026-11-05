@@ -5,6 +5,7 @@ from pydantic import BaseModel,ConfigDict,Field
 Id=Annotated[str,Field(min_length=1,max_length=128)]
 Index=Annotated[int,Field(ge=0,strict=True)]
 Limit=Annotated[int,Field(ge=1,le=100,strict=True)]
+PixelRect=Annotated[list[Annotated[int,Field(ge=0,strict=True)]],Field(min_length=4,max_length=4)]
 
 
 class StrictModel(BaseModel):model_config=ConfigDict(extra='forbid',strict=True)

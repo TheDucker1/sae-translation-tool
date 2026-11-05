@@ -166,6 +166,11 @@ help locate textures but are not an exhaustive scene-use graph: runtime variable
 native bindings and indirect mode data can select additional images. The current
 project's text edits do not change the original-reference index.
 
-This version's image review/extraction interface is the GUI. The existing text
-MCP interface does not yet expose the image catalog. Extracted assets, manifests
-and private inventories are local data and should not be published with the tool.
+The existing standalone and GUI-hosted MCP connections also expose texture and
+UI-scene images with structured asset/layer/text metadata. Use list_textures,
+get_texture and get_texture_usage, or list_ui_scenes → describe_ui_scene →
+get_ui_scene; get_ui_scene_layers pages the exact snapshot with optional glyphs
+and a text-only filter. See the [tool guide](TRANSLATOR_GUIDE.md) for coordinate,
+state and snapshot rules. These calls do not change the GUI/project or write files;
+extraction remains a separate GUI action. Extracted assets, manifests and private
+inventories are local data and should not be published with the tool.

@@ -21,6 +21,7 @@ Run the affected module, for example:
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_composition_extras -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_composition_modes -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_composition_battle -v
+.\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_visual_mcp -v
 ```
 
 Translator/MCP checks require `requirements-mcp.txt`. Run a focused check when
@@ -41,3 +42,6 @@ Mode checks distinguish binary stencil alpha from opacity/luminance and retain
 native three-row description splitting and approach topic capacity.
 Battle checks distinguish unscaled widget anchoring followed by a centered pulse,
 and text advance extents from the rasterized glyph rectangles used to draw them.
+Visual MCP checks cover native image blocks with separate structured geometry,
+offscreen/text/glyph/filter paging and strict state/stale-snapshot handling. They
+require optional MCP dependencies and working local sockets for Python asyncio.

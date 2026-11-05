@@ -19,7 +19,7 @@ from .opcodes import CATALOG,markdown
 from .templates import template
 from .runtime import Session
 from .gameexport import export_game
-from .mcp_models import TranslationEdit,CommandEdit,PreviewInput,BankEdit,Id,Index,Limit
+from .mcp_models import TranslationEdit,CommandEdit,PreviewInput,BankEdit,Id,Index,Limit,PixelRect
 from .dialogueview import project_flow,transcript,readable
 from .textlayout import TextLayoutService,native_field
 from .fontpatch import effective_font
@@ -196,6 +196,59 @@ class TranslationWorkspace:
         scripts=[s for s in self.project.scripts.values() if query.casefold() in s.name.casefold()]
         rows=[dict(id=s.id,name=s.name.strip(' \0'),commands=len(s.commands),text_commands=sum(c.opcode in TEXT_OPS for c in s.commands),has_edit_history=s.id in self.project.touched) for s in scripts[start:start+limit]]
         return dict(revision=self.project.revision,scripts=rows,next_start=start+limit if start+limit<len(scripts) else None)
+
+    def visual_context(self,expected_catalog_revision=None):
+        from .visualcontext import VisualContext
+        if not hasattr(self,'_visual_context'):self._visual_context=VisualContext()
+        context=self._visual_context.bind(self);context.check_catalog(expected_catalog_revision)
+        return context
+
+    @locked
+    def list_textures(self,query:Annotated[str,Field(max_length=200)]='',category:Annotated[str,Field(max_length=100)]='',
+                      source:Annotated[str,Field(max_length=240)]='',start:Index=0,limit:Limit=30,
+                      expected_catalog_revision:Id|None=None)->dict[str,Any]:
+        """Discover/page original texture IDs, dimensions, formats and intended consumers. Exact category/source filters; query searches names/IDs/uses."""
+        return self.visual_context(expected_catalog_revision).textures(query,category,source,start,limit)
+
+    @locked
+    def get_texture(self,asset_id:Id,include_image:bool=True,region:PixelRect|None=None,
+                    max_size:Annotated[int,Field(ge=64,le=2048,strict=True)]=1024,
+                    expected_catalog_revision:Id|None=None)->dict[str,Any]:
+        """Get a texture image plus source/member provenance and original dimensions. region=[x,y,w,h] is an in-bounds texture-pixel crop. PNG is a native MCP image block."""
+        return self.visual_context(expected_catalog_revision).texture(asset_id,include_image,region,max_size)
+
+    @locked
+    def get_texture_usage(self,asset_id:Id,kind:Literal['atlas_regions','script_uses']='atlas_regions',
+                          start:Index=0,limit:Limit=30,expected_catalog_revision:Id|None=None)->dict[str,Any]:
+        """Page known atlas regions or literal original-script uses. Missing mappings do not imply unused assets; these are potential uses, not observed scene execution."""
+        return self.visual_context(expected_catalog_revision).usage(asset_id,kind,start,limit)
+
+    @locked
+    def list_ui_scenes(self)->dict[str,Any]:
+        """List supported static UI-scene families and coverage. Use describe_ui_scene for state fields/bounds, then get_ui_scene for image and layer/text data."""
+        from .composition import FAMILIES
+        from .visualcontext import COORDINATES,LIMITATIONS
+        return dict(project_revision=self.project.revision,families=[dict(family=key,name=name,coverage=coverage) for key,name,coverage in FAMILIES],
+                    coordinates=COORDINATES,limitations=LIMITATIONS)
+
+    @locked
+    def describe_ui_scene(self,family:Annotated[str,Field(min_length=1,max_length=40)],state:dict[str,Any]|None=None,
+                          expected_catalog_revision:Id|None=None)->dict[str,Any]:
+        """Discover this family's exact parameter names/defaults/types/choices and state-dependent bounds. Unknown or invalid supplied fields reject; no GUI/game state changes."""
+        return self.visual_context(expected_catalog_revision).describe(family,state)
+
+    @locked
+    def get_ui_scene(self,family:Annotated[str,Field(min_length=1,max_length=40)],state:dict[str,Any]|None=None,
+                     include_image:bool=True,max_size:Annotated[int,Field(ge=64,le=2048,strict=True)]=1024,
+                     limit:Limit=50,expected_catalog_revision:Id|None=None)->dict[str,Any]:
+        """Render a whole supported static UI scene with current project font and explicit preview state. Returns PNG image plus revision-bound scene_id, paged layers/text, source hashes and limits. Pass current translated text via state, not a guessed story position."""
+        return self.visual_context(expected_catalog_revision).scene(self,family,state,include_image,max_size,limit)
+
+    @locked
+    def get_ui_scene_layers(self,scene_id:Id,start:Index=0,limit:Limit=30,include_glyphs:bool=False,
+                            kind:Literal['all','text','sprite','solid','target']='all')->dict[str,Any]:
+        """Page the exact scene snapshot: draw order/pass, texture/target/mask, crop/position/size/clip/rotation/color, and text/style. Optional glyphs provide codepoints/rectangles/colors. Stale/evicted snapshots reject."""
+        return self.visual_context().layers(scene_id,start,limit,include_glyphs,kind)
 
     @locked
     def list_commands(self,script_id:Index,start:Index=0,limit:Limit=30,text_only:bool=True,

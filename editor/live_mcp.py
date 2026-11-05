@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QApplication,QDialog,QVBoxLayout,QHBoxLayout,QLab
     QPushButton,QPlainTextEdit,QFileDialog,QSpinBox)
 from .translation import TranslationWorkspace,locked,digest
 from .mcp_models import Id,Index
-from .mcp_server import create_server,READ_TOOLS
+from .mcp_server import create_server,READ_TOOLS,VISUAL_TOOLS
 from .engine import ROOT
 from .routes import RouteBook
 
@@ -143,6 +143,8 @@ class GuiWorkspace(TranslationWorkspace):
     def invoke(self,fn,args,kwargs):
         """Only called on the Qt owner thread; the GUI and agent cannot interleave a commit."""
         self.sync();name=fn.__name__;w=self.window;write=name not in READ_TOOLS
+        if name in VISUAL_TOOLS and not w.centralWidget().isEnabled():
+            raise ValueError('GUI is loading/changing its game source; retry visual reads when loading finishes')
         if write and (QApplication.activeModalWidget() is not None or w.export_worker is not None or not w.centralWidget().isEnabled()):
             raise ValueError('GUI busy with a dialog/loading/export; request rejected without changes. Retry after it finishes.')
         if name in PREVIEW_WRITES and w.playing:raise ValueError('Shared preview is playing; call pause_preview, then use its state_revision')
