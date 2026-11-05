@@ -6,10 +6,11 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QForm
     QSplitter, QLabel, QPushButton, QComboBox, QSpinBox, QCheckBox, QPlainTextEdit,
     QListWidget, QListWidgetItem, QTabWidget, QScrollArea)
 from PySide6.QtCore import Signal
-from .composition import FAMILIES, IMPLEMENTED_FAMILIES, EnvironmentLibrary, Layer
+from .composition import FAMILIES, IMPLEMENTED_FAMILIES, EnvironmentLibrary, Layer, walk_layers
 from .compositioncommon import PARAMETERS, cached, dialog_environment, calendar_environment
 from .compositionlists import PARAMETERS as LIST_PARAMETERS, backlog_environment
 from .compositionsettings import PARAMETERS as SETTINGS_PARAMETERS, settings_environment, parameter_visible
+from .compositionextras import PARAMETERS as EXTRAS_PARAMETERS, preview_limits as extras_limits, parameter_visible as extras_parameter_visible
 from .compositionrender import AssetResolver, TextureLoader, FontConsumer, render_composition
 from .imageview import ImageCanvas, ImageJob
 
@@ -77,7 +78,7 @@ class CompositionBrowser(QDialog):
     def set_context(self, catalog, font, sample_text='', focus=None, sample_speaker=-1, samples=None):
         self.invalidate()
         self.catalog = catalog; self.font = font; self.font_consumer = FontConsumer(font) if font else None
-        self.library = EnvironmentLibrary(catalog.root); self.loader = TextureLoader(AssetResolver(catalog))
+        self.library = EnvironmentLibrary(catalog.root, catalog=catalog); self.loader = TextureLoader(AssetResolver(catalog))
         self.backdrop.blockSignals(True); self.backdrop.clear(); self.backdrop.addItem('Neutral matte', None)
         for a in catalog.assets:
             if a.source == 'resource.dat' and len(a.route) == 2 and a.route[0] in (5, 9) and a.status == 'Ready':
@@ -91,6 +92,7 @@ class CompositionBrowser(QDialog):
         if focus and focus.source == 'resource.dat' and focus.route:
             bank = focus.route[0]
             key = {15: 'title', 13: 'system', 16: 'battle', 3: 'profile', 2: 'extras'}.get(bank, 'message')
+            if bank == 15 and focus.route[-1] <= 62: key = 'extras'
             if bank == 1:
                 if focus.route[-1] in (4, 5, 6, 50): key = 'calendar'
                 elif focus.route[-1] in (18, 19, 20): key = 'choices'
@@ -120,18 +122,18 @@ class CompositionBrowser(QDialog):
         self.selected.setSpecialValueText('No focus')
         for widget in (self.variant, self.press_start): widget.setEnabled(key == 'title')
         for widget in (self.speaker, self.opacity, self.skip, self.auto, self.cursor): widget.setEnabled(key == 'message')
-        self.selected.setEnabled(key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings')); self.progress.setEnabled(key in ('title', 'message', 'choices', 'dialogs'))
+        self.selected.setEnabled(key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras')); self.progress.setEnabled(key in ('title', 'message', 'choices', 'dialogs'))
         self.chapter.setEnabled(key in ('system', 'calendar')); self.backdrop.setEnabled(key != 'title'); self.text.setEnabled(key != 'title')
         common = {
-            self.selected: key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings'), self.variant: key == 'title',
+            self.selected: key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras'), self.variant: key == 'title',
             self.press_start: key == 'title', self.progress: key in ('title', 'message', 'choices', 'dialogs'),
             self.angle: key in ('title', 'message'), self.speaker: key == 'message', self.opacity: key == 'message',
             self.chapter: key in ('system', 'calendar'), self.skip: key == 'message', self.auto: key == 'message',
-            self.cursor: key == 'message', self.text: key not in ('title', 'settings'), self.backdrop: key != 'title'}
+            self.cursor: key == 'message', self.text: key not in ('title', 'settings', 'extras'), self.backdrop: key != 'title'}
         for widget, visible in common.items(): self.form.setRowVisible(widget, visible)
         while self.extra_form.rowCount(): self.extra_form.removeRow(0)
         self.parameters = {}
-        for name, label, kind, default, *bounds in (PARAMETERS | LIST_PARAMETERS | SETTINGS_PARAMETERS).get(key, ()):
+        for name, label, kind, default, *bounds in (PARAMETERS | LIST_PARAMETERS | SETTINGS_PARAMETERS | EXTRAS_PARAMETERS).get(key, ()):
             if kind == 'bool': control = QCheckBox(); control.setChecked(default); control.toggled.connect(self.changed)
             elif kind == 'enum':
                 control = QComboBox()
@@ -149,7 +151,7 @@ class CompositionBrowser(QDialog):
 
     def refresh(self):
         if self.catalog:
-            self.library = EnvironmentLibrary(self.catalog.root); self.rebuild()
+            self.library = EnvironmentLibrary(self.catalog.root, catalog=self.catalog); self.rebuild()
 
     def rebuild(self):
         if not self.catalog: return
@@ -170,6 +172,11 @@ class CompositionBrowser(QDialog):
         if len(state['text']) > 4096:
             self.status.setText('Sample text is limited to4096 characters.'); return
         try:
+            if key == 'extras':
+                for name, control in self.parameters.items(): self.extra_form.setRowVisible(control, extras_parameter_visible(name, state['view']))
+                for name, maximum in extras_limits(self.library, state).items():
+                    control = self.selected if name == 'selected' else self.parameters[name]
+                    control.blockSignals(True); control.setMaximum(maximum); control.blockSignals(False); state[name] = control.value()
             if key == 'settings':
                 env = cached(self.library, 'settings', 'env/env_option.dat', settings_environment)
                 page = state['page']
@@ -245,10 +252,11 @@ class CompositionBrowser(QDialog):
             self.status.setText(str(error)); return
         self.composition = composition; self.canvas.display(image)
         self.notes.setPlainText('\n'.join(composition.notes + errors + issues) + '\n\nLayout source hashes:\n' + json.dumps(composition.sources, indent=2))
-        for i, layer in enumerate(composition.layers):
+        self.display_layers = list(walk_layers(composition.layers))
+        for i, layer in enumerate(self.display_layers):
             item = QListWidgetItem(f'{i:02} · {layer.name} · {layer.asset or "text"}')
             item.setData(Qt.UserRole, i); self.layers.addItem(item)
-        self.status.setText(f'{len(composition.layers)} layers · {len(errors) + len(issues)} diagnostics. Preview state only; originals unchanged.')
+        self.status.setText(f'{len(self.display_layers)} layers · {len(errors) + len(issues)} diagnostics. Preview state only; originals unchanged.')
 
     def job_finished(self):
         old, self.job = self.job, None
@@ -257,7 +265,7 @@ class CompositionBrowser(QDialog):
 
     def inspect_layer(self, item, *_):
         if not item or not self.composition: return
-        layer = self.composition.layers[item.data(Qt.UserRole)]
+        layer = self.display_layers[item.data(Qt.UserRole)]
         self.details.setPlainText(json.dumps(asdict(layer), ensure_ascii=False, indent=2))
         self.canvas.region(layer.destination)
         if self.canvas.region_item and layer.rotation:
@@ -266,8 +274,10 @@ class CompositionBrowser(QDialog):
 
     def inspect_source(self, item):
         if self.composition:
-            layer = self.composition.layers[item.data(Qt.UserRole)]
-            if layer.asset: self.assetPicked.emit(layer.asset)
+            layer = self.display_layers[item.data(Qt.UserRole)]
+            if layer.asset.startswith('@target:'):
+                self.details.appendPlainText('\nGenerated render target; inspect its child layers for original source images.')
+            elif layer.asset: self.assetPicked.emit(layer.asset)
 
     def cancel_work(self):
         self.timer.stop(); self.generation += 1; self.pending = None

@@ -37,6 +37,7 @@ Thumbs.db
 !/tests/test_opcode_reference.py
 !/tests/test_image_assets.py
 !/tests/test_composition.py
+!/tests/test_composition_extras.py
 
 # Original/extracted game assets, native evidence and generated translations.
 GAMEFILE/

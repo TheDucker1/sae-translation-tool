@@ -20,7 +20,7 @@ FAMILIES = (
     ('slots', 'Save / load', 'Implemented: clipped cards, empty/occupied/lock/new variants and scrollbars; sample records only'),
     ('backlog', 'Backlog', 'Implemented: clipped sample dialogue rows, selection, voice icons and scrollbars'),
     ('settings', 'Settings / help', 'Implemented: text/audio/voice pages, header variants and authored help; fourth tab has no source page content'),
-    ('extras', 'Extras', 'Pending: gallery / music / replay layouts'),
+    ('extras', 'Extras', 'Implemented: section menu, CG album/viewer, movie thumbnails, music and replay list; preview unlock/playback flags'),
     ('profile', 'Profiles / approach', 'Pending: profile / approach / result layouts'),
     ('battle', 'Battle', 'Pending: introduction / choices / result layouts'),
 )
@@ -40,6 +40,16 @@ class Layer:
     size: int = 0
     glyphs: list = field(default_factory=list)
     clip: list = field(default_factory=list)
+    blend: str = 'normal'
+    target: str = ''
+    children: list = field(default_factory=list)
+
+
+def walk_layers(layers, depth=0):
+    if depth > 4: raise ImageError('Composition target nesting exceeds budget')
+    for layer in layers:
+        yield layer
+        if layer.children: yield from walk_layers(layer.children, depth + 1)
 
 
 @dataclass
@@ -97,8 +107,17 @@ def text_layer(name, text, position, size, rgba, font, *, center=False):
 
 class EnvironmentLibrary:
     """Small immutable environment snapshots; changes require an explicit refresh."""
-    def __init__(self, root):
-        self.root = root; self.files = {}; self.decoded = {}
+    def __init__(self, root, *, catalog=None):
+        self.root = root; self.files = {}; self.decoded = {}; self.catalog = catalog
+        self.members = {}; self.member_sources = {}
+
+    def member(self, source, route):
+        if self.catalog is None: raise ImageError('A source image catalog is required for archive metadata')
+        self.catalog.verify(); key = (source, tuple(route))
+        if key not in self.members:
+            self.members[key] = self.catalog.read_member(source, route)
+            self.member_sources[source + ':' + '/'.join(map(str, route))] = hashlib.sha256(self.members[key]).hexdigest()
+        return self.members[key]
 
     def read(self, relative):
         path = self.root / relative
@@ -112,6 +131,7 @@ class EnvironmentLibrary:
         return self.files[relative][1]
 
     def verify(self):
+        if self.catalog: self.catalog.verify()
         for relative, (before, _, _) in self.files.items():
             if stamp(self.root / relative) != before:
                 raise ImageError(f'Layout source changed: {relative}. Refresh compositions; reload game for font/text changes.')
@@ -134,10 +154,11 @@ class EnvironmentLibrary:
                 from .compositioncommon import ADAPTERS
                 from .compositionlists import ADAPTERS as LIST_ADAPTERS
                 from .compositionsettings import ADAPTERS as SETTINGS_ADAPTERS
-                result = (ADAPTERS | LIST_ADAPTERS | SETTINGS_ADAPTERS)[family](self, state, font)
+                from .compositionextras import ADAPTERS as EXTRAS_ADAPTERS
+                result = (ADAPTERS | LIST_ADAPTERS | SETTINGS_ADAPTERS | EXTRAS_ADAPTERS)[family](self, state, font)
         except (KeyError, IndexError) as error:
             raise ImageError(f'{family}: source layout tables are incomplete or a selector is outside their range ({error})') from error
-        result.sources = {k: v[2] for k, v in self.files.items()}
+        result.sources = {k: v[2] for k, v in self.files.items()} | self.member_sources
         return result
 
 

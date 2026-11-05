@@ -136,6 +136,19 @@ class ImageCatalog:
         self.verify()
         return bytes(data)
 
+    def read_member(self, source, route, cancelled=None):
+        """Read immutable catalogue metadata through the same GPDA/gzip cache."""
+        if source not in self.sources: raise ImageError('Source was not part of this inventory')
+        data = self.source_data(source)
+        for index in route:
+            checkpoint(cancelled)
+            archive = Archive(data)
+            if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(archive.entries):
+                raise ImageError('Metadata member index outside archive')
+            data, _ = unpack_member(archive, index)
+        self.verify(); checkpoint(cancelled)
+        return bytes(data)
+
     def decode(self, asset_id, cancelled=None):
         asset = self.by_id[asset_id]
         data = self.read(asset_id, cancelled)

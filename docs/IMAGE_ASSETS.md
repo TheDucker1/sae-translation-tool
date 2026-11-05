@@ -40,6 +40,11 @@ Choose **Images… → UI compositions…**. Implemented compositions include:
   Values affect only this composition, without changing game settings or audio.
   The fourth alternate header is viewable, but the current reference defines no
   page-content drawing for that tab; the preview states this gap explicitly.
+- **Extras:** section menu, CG album/full-image viewer, movie-thumbnail gallery,
+  music-player UI and battle replay list. **Extras screen** selects the view;
+  category/page/cell/variant controls select CGs. Other lists expose selection and
+  scrolling. Unlock/new flags and music position/mode are preview samples, without
+  reading personal progress or playing movies, audio or battle replays.
 
 Choose a background/CG for context in non-title previews, or leave the
 neutral matte. Context backdrops are selected explicitly; they do not claim to
@@ -54,14 +59,17 @@ it in the individual-image browser. Layouts keep texture identities separate fro
 pixels so future replacement previews can resolve the same identities; replacement
 editing/import/reinjection is not available yet.
 
-**UI families** tracks implemented and pending adapters. Extras, profiles/approach
-and battle remain pending. Choosing one reports that status and clears the preview.
+**UI families** tracks implemented and pending adapters. Profiles/approach and
+battle remain pending. Choosing one reports that status and clears the preview.
 It does not substitute an unrelated layout. Coverage/diagnostics also identifies
 omitted title particles/live submenus and text decorations or reveal effects.
 Static composition does not provide menu actions or full native scene playback.
 
 Rendering uses shared crop/anchor/scale/tint/opacity/rotation primitives and
-clamped texture edges. Text reuses the editor's font data and Qt rasterization;
+clamped texture edges. Extras headers also use offscreen targets and the authored
+RGBA multiply blend. Their contributing source layers are inspectable individually;
+the generated target itself has no separate source image. Text reuses the editor's
+font data and Qt rasterization;
 this is not a Vita/PC pixel-parity test. **Refresh layouts** rereads environment
 snapshots. Reload the game to import externally changed font/text settings, and
 re-index images for changed source textures. Source switches invalidate pending
