@@ -236,7 +236,7 @@ class Window(QMainWindow):
         self.routes=RouteBook();self.script_cache={};self.seek_origin=None;self.target_phase='before';self.seek_steps=0;self.state_origin='Fresh file entry';self.file_signature=None
         self.project=None;self.project_path=None;self.preview_revision=None;self.diagnostics=[]
         self.project_disk_hash=None;self.interaction_revision=uuid.uuid4().hex
-        self.mcp_panel=None;self.mcp_workspace=None;self.export_worker=None;self.export_remote=False
+        self.mcp_panel=None;self.mcp_workspace=None;self.export_worker=None;self.export_remote=False;self.image_panel=None
         self.model=Commands(); self.proxy=CommandFilter(self); self.proxy.setSourceModel(self.model); self.proxy.setDynamicSortFilter(False); self.proxy.setFilterKeyColumn(-1); self.proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
         central=QWidget(); self.setCentralWidget(central); outer=QVBoxLayout(central); outer.setContentsMargins(16,14,16,10)
         top=QHBoxLayout(); title=QLabel('SCRIPT STUDIO'); title.setStyleSheet('font-size:21px;font-weight:700;letter-spacing:2px'); top.addWidget(title)
@@ -245,6 +245,7 @@ class Window(QMainWindow):
         self.open_button=QPushButton('Load game'); self.open_button.setObjectName('primary'); self.open_button.clicked.connect(self.load_game); top.addWidget(self.open_button); outer.addLayout(top)
         self.mcp_button=QPushButton('MCP…');self.mcp_button.clicked.connect(self.show_mcp_panel);top.addWidget(self.mcp_button)
         self.fit_button=QPushButton('Auto-fit text…');self.fit_button.clicked.connect(self.auto_fit_text);top.addWidget(self.fit_button)
+        self.images_button=QPushButton('Images…');self.images_button.clicked.connect(self.show_images);top.addWidget(self.images_button)
         bar=QHBoxLayout(); self.selector=QComboBox(); self.selector.setMinimumWidth(280); self.selector.currentIndexChanged.connect(self.select_script); bar.addWidget(self.selector)
         for label,action in [('Restart',self.restart),('Rewind',self.rewind),('▶ Play',self.play),('Step',self.step_command),('Preview here',self.jump_selected),('Run forward',self.run_to_selected)]:
             b=QPushButton(label); b.clicked.connect(action); bar.addWidget(b)
@@ -321,6 +322,7 @@ class Window(QMainWindow):
         if self.mcp_panel and not self.mcp_panel.shutdown():self.statusBar().showMessage('MCP is stopping; retry loading after it finishes.');return
         self.pause(); path=str(Path(self.folder.text()).expanduser().resolve()); self.preview.clear()
         if not Path(path,'resource.dat').is_file(): self.problem('Select the USRDIR folder containing resource.dat.'); return
+        if self.image_panel:self.image_panel.invalidate()
         self.state_line.setText('Loading original scripts and text settings…'); self.centralWidget().setEnabled(False); self.view={}
         self.worker=Loader(self.session,path); self.worker.ready.connect(self.loaded); self.worker.failed.connect(self.load_failed); self.worker.start()
 
@@ -844,6 +846,8 @@ class Window(QMainWindow):
             self.export_worker.requestInterruption();self.statusBar().showMessage('Cancelling export; close again after staging cleanup completes.');event.ignore();return
         if not self.confirm_project_discard():event.ignore();return
         if self.mcp_panel and not self.mcp_panel.shutdown():event.ignore();return
+        if self.image_panel and not self.image_panel.shutdown():
+            self.statusBar().showMessage('Cancelling image operation; close again after it finishes.');event.ignore();return
         if hasattr(self,'worker') and self.worker.isRunning():self.worker.wait()
         super().closeEvent(event)
 
@@ -861,6 +865,34 @@ class Window(QMainWindow):
                 self.mcp_panel=McpPanel(self)
             except ImportError as error:self.problem('Install the optional MCP dependencies with setup-mcp.ps1: '+str(error));return
         self.mcp_panel.show();self.mcp_panel.raise_();self.mcp_panel.activateWindow()
+
+    def show_images(self):
+        if not self.session.original:self.problem('Load a game folder first.');return
+        self.pause()
+        if self.image_panel is None:
+            from .imageview import ImageBrowser
+            self.image_panel=ImageBrowser(self)
+            self.image_panel.commandPicked.connect(self.inspect_image_use)
+        selected=self.table.currentIndex()
+        command=self.commands[self.proxy.mapToSource(selected).row()] if selected.isValid() and self.commands else None
+        sample=command if command and command['opcode']==0x64 else next((c for c in self.commands if c['opcode']==0x64),None)
+        examples={}
+        choice=command if command and command['opcode']==0x65 else next((c for c in self.commands if c['opcode']==0x65),None)
+        if choice:examples['choices']='\n'.join(row['label'] for row in choice['args']['choices'])
+        chapter=command if command and command['opcode']==0x3ec else next((c for c in self.commands if c['opcode']==0x3ec),None)
+        if chapter:examples['calendar']='\n'.join(chapter['args']['texts']);examples['system']=chapter['args']['texts'][-1]
+        self.image_panel.set_source(self.session.root,self.session.descriptions,self.session.text,
+                                    sample['args']['text'] if sample else '',sample['args']['speaker'] if sample else -1,examples)
+        self.image_panel.show();self.image_panel.raise_();self.image_panel.activateWindow()
+
+    def inspect_image_use(self,script,original_index):
+        self.pause();index=original_index
+        if self.project is not None:
+            index=next((i for i,c in enumerate(self.project.scripts[script].commands)
+                        if c.original_index==original_index),None)
+            if index is None:self.problem('That original command was removed from the current project.');return
+        self.selector.setCurrentIndex(self.selector.findData(script));self.select_command(index)
+        self.workspace_tabs.setCurrentIndex(0)
 
 
 STYLE='''

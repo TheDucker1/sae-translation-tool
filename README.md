@@ -48,10 +48,24 @@ or Impacto checkout is required. Restart after application updates.
 Editable families: dialogue, ordinary choices, chapter captions, battle choices,
 approach topics/options, approach results and battle-introduction captions. Other
 commands retain the logical state/control flow needed for translation preview;
-native title/settings menus and non-script translation assets are outside this alpha.
+native menu interaction remains outside the scenario simulator. Read-only UI
+composition previews and non-script image inspection are available separately below.
 
 Structural changes can invalidate existing game saves/history. Export reports
 when fresh progress is required; it does not migrate personal saves.
+
+## Image assets
+
+**Load game → Images…** opens a read-only inventory across the full source data
+tree. Search/filter textures, view transparency and known atlas regions, inspect
+archive/member locations and literal script uses, and extract original image
+members and/or PNGs into a separate empty folder with a provenance manifest.
+Images are decoded on selection; no image editing or reinjection is included.
+**UI compositions…** assembles title/menu, gameplay message-window, system-menu,
+choices, calendar/chapter and shared-dialog layouts with selectable preview states
+and inspectable layers.
+Additional UI families are tracked explicitly as pending.
+See [the image-browser guide](docs/IMAGE_ASSETS.md) for usage and coverage limits.
 
 ## Wrapping and readability
 

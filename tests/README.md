@@ -16,7 +16,17 @@ Run the affected module, for example:
 ```powershell
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_document.py -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_game_export.py -v
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_image_assets.py -v
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_composition.py -v
 ```
 
 Translator/MCP checks require `requirements-mcp.txt`. Run a focused check when
 changing its boundary; do not replay a game or run unrelated suites for every edit.
+
+The image module uses tiny synthetic GPDA/GXT/font fixtures for pixel layouts,
+member provenance, extraction boundaries and asynchronous GUI source switching.
+It requires PySide6 but no game files or optional MCP package.
+
+Composition checks use tiny synthetic pixels to distinguish atlas edge clamping,
+flips, anchor/scale, tint, layer blending and pivot rotation, plus layout-source
+snapshot invalidation. They do not replay menu controllers or game scenarios.
