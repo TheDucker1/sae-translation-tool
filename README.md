@@ -62,7 +62,7 @@ archive/member locations and literal script uses, and extract original image
 members and/or PNGs into a separate empty folder with a provenance manifest.
 Images are decoded on selection; no image editing or reinjection is included.
 **UI compositions…** assembles title/menu, gameplay message-window, system-menu,
-choices, calendar/chapter, shared-dialog, save/load and backlog layouts with preview states
+choices, calendar/chapter, shared-dialog, save/load, backlog and settings/help layouts with preview states
 and inspectable layers.
 Additional UI families are tracked explicitly as pending.
 See [the image-browser guide](docs/IMAGE_ASSETS.md) for usage and coverage limits.

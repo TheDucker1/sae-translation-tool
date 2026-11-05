@@ -19,7 +19,7 @@ FAMILIES = (
     ('dialogs', 'Shared dialogs', 'Implemented: measured prompt, tiled frame, authored button groups and focus'),
     ('slots', 'Save / load', 'Implemented: clipped cards, empty/occupied/lock/new variants and scrollbars; sample records only'),
     ('backlog', 'Backlog', 'Implemented: clipped sample dialogue rows, selection, voice icons and scrollbars'),
-    ('settings', 'Settings / help', 'Pending: page-specific widget bindings'),
+    ('settings', 'Settings / help', 'Implemented: text/audio/voice pages, header variants and authored help; fourth tab has no source page content'),
     ('extras', 'Extras', 'Pending: gallery / music / replay layouts'),
     ('profile', 'Profiles / approach', 'Pending: profile / approach / result layouts'),
     ('battle', 'Battle', 'Pending: introduction / choices / result layouts'),
@@ -126,13 +126,17 @@ class EnvironmentLibrary:
         return self.decoded[family]
 
     def build(self, family, state, font):
-        builders = {'title': title_layout, 'message': message_layout, 'system': system_layout}
-        if family in builders:
-            result = builders[family](self.get(family), state, font)
-        else:
-            from .compositioncommon import ADAPTERS
-            from .compositionlists import ADAPTERS as LIST_ADAPTERS
-            result = (ADAPTERS | LIST_ADAPTERS)[family](self, state, font)
+        try:
+            builders = {'title': title_layout, 'message': message_layout, 'system': system_layout}
+            if family in builders:
+                result = builders[family](self.get(family), state, font)
+            else:
+                from .compositioncommon import ADAPTERS
+                from .compositionlists import ADAPTERS as LIST_ADAPTERS
+                from .compositionsettings import ADAPTERS as SETTINGS_ADAPTERS
+                result = (ADAPTERS | LIST_ADAPTERS | SETTINGS_ADAPTERS)[family](self, state, font)
+        except (KeyError, IndexError) as error:
+            raise ImageError(f'{family}: source layout tables are incomplete or a selector is outside their range ({error})') from error
         result.sources = {k: v[2] for k, v in self.files.items()}
         return result
 

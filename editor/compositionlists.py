@@ -63,11 +63,13 @@ def global_ui_environment(data):
     return dict(base=base, particles=particles, keys=keys, separator=separator, scale=scale, gap=gap)
 
 
-def button_help(out, library, font, mode=None):
+def button_help(out, library, font, mode=None, *, items=None, rectangle=None):
     if font is None: return
     e = cached(library, 'help', 'env/env_help_mgr.dat', help_environment)
     style = cached(library, 'global_ui', 'env/env_global.dat', global_ui_environment)
-    rows, rectangle = (e['common'], e['common_rect']) if mode is None else (e['slots'][mode], e['slot_rect'])
+    rows, authored_rectangle = (e['common'], e['common_rect']) if mode is None else (e['slots'][mode], e['slot_rect'])
+    if items is not None: rows = items
+    if rectangle is None: rectangle = authored_rectangle
     size = int(font.utility * style['scale']); gap = style['gap']; x, y, width, height = rectangle
     cursor = 0; half = (font.utility - size) >> 1
     for i, (key, label) in enumerate(rows):

@@ -34,6 +34,12 @@ Choose **Images… → UI compositions…**. Implemented compositions include:
   scrolling rows, scrollbar and voice-icon frames. Clear Sample text for the empty
   state. Rows can start from dialogue samples in the selected file; these are not
   personal history. No voice replay or game rewind is executed.
+- **Settings / help:** text, audio and voice pages with their sliders/toggles,
+  selection highlights, voice modes/characters, header variants and authored help
+  descriptions/footer. **Options page** switches pages; unrelated controls hide.
+  Values affect only this composition, without changing game settings or audio.
+  The fourth alternate header is viewable, but the current reference defines no
+  page-content drawing for that tab; the preview states this gap explicitly.
 
 Choose a background/CG for context in non-title previews, or leave the
 neutral matte. Context backdrops are selected explicitly; they do not claim to
@@ -48,7 +54,7 @@ it in the individual-image browser. Layouts keep texture identities separate fro
 pixels so future replacement previews can resolve the same identities; replacement
 editing/import/reinjection is not available yet.
 
-**UI families** tracks implemented and pending adapters. Settings/help, Extras, profiles/approach
+**UI families** tracks implemented and pending adapters. Extras, profiles/approach
 and battle remain pending. Choosing one reports that status and clears the preview.
 It does not substitute an unrelated layout. Coverage/diagnostics also identifies
 omitted title particles/live submenus and text decorations or reveal effects.

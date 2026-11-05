@@ -9,6 +9,7 @@ from PySide6.QtCore import Signal
 from .composition import FAMILIES, IMPLEMENTED_FAMILIES, EnvironmentLibrary, Layer
 from .compositioncommon import PARAMETERS, cached, dialog_environment, calendar_environment
 from .compositionlists import PARAMETERS as LIST_PARAMETERS, backlog_environment
+from .compositionsettings import PARAMETERS as SETTINGS_PARAMETERS, settings_environment, parameter_visible
 from .compositionrender import AssetResolver, TextureLoader, FontConsumer, render_composition
 from .imageview import ImageCanvas, ImageJob
 
@@ -100,6 +101,7 @@ class CompositionBrowser(QDialog):
             if bank == 13 and 7 <= focus.route[-1] <= 21:
                 self.selected.setValue((focus.route[-1] - 7) % 5)
             if bank == 13 and 62 <= focus.route[-1] <= 72: key = 'slots'
+            if bank == 13 and 25 <= focus.route[-1] <= 61: key = 'settings'
             if bank == 1 and 41 <= focus.route[-1] <= 49: self.speaker.setValue(focus.route[-1] - 41)
         self.family.setCurrentIndex(self.family.findData(key)); self.configure_family(); self.timer.stop(); self.rebuild()
 
@@ -118,18 +120,18 @@ class CompositionBrowser(QDialog):
         self.selected.setSpecialValueText('No focus')
         for widget in (self.variant, self.press_start): widget.setEnabled(key == 'title')
         for widget in (self.speaker, self.opacity, self.skip, self.auto, self.cursor): widget.setEnabled(key == 'message')
-        self.selected.setEnabled(key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog')); self.progress.setEnabled(key in ('title', 'message', 'choices', 'dialogs'))
+        self.selected.setEnabled(key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings')); self.progress.setEnabled(key in ('title', 'message', 'choices', 'dialogs'))
         self.chapter.setEnabled(key in ('system', 'calendar')); self.backdrop.setEnabled(key != 'title'); self.text.setEnabled(key != 'title')
         common = {
-            self.selected: key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog'), self.variant: key == 'title',
+            self.selected: key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings'), self.variant: key == 'title',
             self.press_start: key == 'title', self.progress: key in ('title', 'message', 'choices', 'dialogs'),
             self.angle: key in ('title', 'message'), self.speaker: key == 'message', self.opacity: key == 'message',
             self.chapter: key in ('system', 'calendar'), self.skip: key == 'message', self.auto: key == 'message',
-            self.cursor: key == 'message', self.text: key != 'title', self.backdrop: key != 'title'}
+            self.cursor: key == 'message', self.text: key not in ('title', 'settings'), self.backdrop: key != 'title'}
         for widget, visible in common.items(): self.form.setRowVisible(widget, visible)
         while self.extra_form.rowCount(): self.extra_form.removeRow(0)
         self.parameters = {}
-        for name, label, kind, default, *bounds in (PARAMETERS | LIST_PARAMETERS).get(key, ()):
+        for name, label, kind, default, *bounds in (PARAMETERS | LIST_PARAMETERS | SETTINGS_PARAMETERS).get(key, ()):
             if kind == 'bool': control = QCheckBox(); control.setChecked(default); control.toggled.connect(self.changed)
             elif kind == 'enum':
                 control = QComboBox()
@@ -168,6 +170,19 @@ class CompositionBrowser(QDialog):
         if len(state['text']) > 4096:
             self.status.setText('Sample text is limited to4096 characters.'); return
         try:
+            if key == 'settings':
+                env = cached(self.library, 'settings', 'env/env_option.dat', settings_environment)
+                page = state['page']
+                if page == 3 and not state['alternate']:
+                    control = self.parameters['alternate']; control.blockSignals(True); control.setChecked(True); control.blockSignals(False)
+                    state['alternate'] = True
+                self.selected.blockSignals(True); self.selected.setMaximum((6, 5, 1, 0)[page]); self.selected.blockSignals(False)
+                state['selected'] = self.selected.value(); self.form.setRowVisible(self.selected, page < 3)
+                for name, control in self.parameters.items():
+                    self.extra_form.setRowVisible(control, parameter_visible(name, page))
+                    if name in ('text_speed', 'auto_speed', 'window_opacity') or name.startswith('audio_') and name != 'audio_toggle':
+                        maximum = env.signed(0x14 if name in ('text_speed', 'auto_speed') else 0x18) - 1
+                        control.blockSignals(True); control.setMaximum(maximum); control.blockSignals(False); state[name] = control.value()
             if key == 'backlog':
                 count = len(state['text'].splitlines())
                 self.selected.blockSignals(True); self.selected.setMaximum(max(0, count - 1)); self.selected.blockSignals(False)
