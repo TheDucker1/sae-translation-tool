@@ -19,6 +19,7 @@ Run the affected module, for example:
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_image_assets.py -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_composition.py -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_composition_extras -v
+.\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_composition_modes -v
 ```
 
 Translator/MCP checks require `requirements-mcp.txt`. Run a focused check when
@@ -35,3 +36,5 @@ The focused list-rendering case also checks clipped reversed source rectangles
 and natural-size cached help icons without any original assets or save data.
 Extras checks distinguish native catalogue token/category padding and offscreen
 RGBA multiplication (including alpha and quad coverage) from normal source-over.
+Mode checks distinguish binary stencil alpha from opacity/luminance and retain
+native three-row description splitting and approach topic capacity.

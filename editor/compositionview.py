@@ -11,6 +11,7 @@ from .compositioncommon import PARAMETERS, cached, dialog_environment, calendar_
 from .compositionlists import PARAMETERS as LIST_PARAMETERS, backlog_environment
 from .compositionsettings import PARAMETERS as SETTINGS_PARAMETERS, settings_environment, parameter_visible
 from .compositionextras import PARAMETERS as EXTRAS_PARAMETERS, preview_limits as extras_limits, parameter_visible as extras_parameter_visible
+from .compositionmodes import PARAMETERS as MODE_PARAMETERS, preview_limits as mode_limits, parameter_visible as mode_parameter_visible
 from .compositionrender import AssetResolver, TextureLoader, FontConsumer, render_composition
 from .imageview import ImageCanvas, ImageJob
 
@@ -122,19 +123,23 @@ class CompositionBrowser(QDialog):
         self.selected.setSpecialValueText('No focus')
         for widget in (self.variant, self.press_start): widget.setEnabled(key == 'title')
         for widget in (self.speaker, self.opacity, self.skip, self.auto, self.cursor): widget.setEnabled(key == 'message')
-        self.selected.setEnabled(key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras')); self.progress.setEnabled(key in ('title', 'message', 'choices', 'dialogs'))
+        self.selected.setEnabled(key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras', 'profile')); self.progress.setEnabled(key in ('title', 'message', 'choices', 'dialogs'))
         self.chapter.setEnabled(key in ('system', 'calendar')); self.backdrop.setEnabled(key != 'title'); self.text.setEnabled(key != 'title')
         common = {
-            self.selected: key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras'), self.variant: key == 'title',
+            self.selected: key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras', 'profile'), self.variant: key == 'title',
             self.press_start: key == 'title', self.progress: key in ('title', 'message', 'choices', 'dialogs'),
             self.angle: key in ('title', 'message'), self.speaker: key == 'message', self.opacity: key == 'message',
             self.chapter: key in ('system', 'calendar'), self.skip: key == 'message', self.auto: key == 'message',
-            self.cursor: key == 'message', self.text: key not in ('title', 'settings', 'extras'), self.backdrop: key != 'title'}
+            self.cursor: key in ('message', 'profile'), self.text: key not in ('title', 'settings', 'extras', 'profile'), self.backdrop: key != 'title'}
+        self.cursor.setEnabled(key in ('message', 'profile'))
         for widget, visible in common.items(): self.form.setRowVisible(widget, visible)
         while self.extra_form.rowCount(): self.extra_form.removeRow(0)
         self.parameters = {}
-        for name, label, kind, default, *bounds in (PARAMETERS | LIST_PARAMETERS | SETTINGS_PARAMETERS | EXTRAS_PARAMETERS).get(key, ()):
+        for name, label, kind, default, *bounds in (PARAMETERS | LIST_PARAMETERS | SETTINGS_PARAMETERS | EXTRAS_PARAMETERS | MODE_PARAMETERS).get(key, ()):
             if kind == 'bool': control = QCheckBox(); control.setChecked(default); control.toggled.connect(self.changed)
+            elif kind == 'text':
+                control = QPlainTextEdit(); control.setMaximumHeight(130)
+                control.setPlainText(self.family_text.get(key + ':' + name, default)); control.textChanged.connect(self.changed)
             elif kind == 'enum':
                 control = QComboBox()
                 for value, text in bounds[0]: control.addItem(text, value)
@@ -167,11 +172,20 @@ class CompositionBrowser(QDialog):
                      speaker=self.speaker.value(), opacity=self.opacity.value(), chapter=self.chapter.value(),
                      angle=self.angle.value(), press_start=self.press_start.isChecked(), skip=self.skip.isChecked(),
                      auto=self.auto.isChecked(), cursor=self.cursor.isChecked(), text=self.text.toPlainText())
-        state.update({name: control.isChecked() if isinstance(control, QCheckBox) else control.currentData() if isinstance(control, QComboBox) else control.value()
+        state.update({name: control.isChecked() if isinstance(control, QCheckBox) else control.currentData() if isinstance(control, QComboBox) else control.toPlainText() if isinstance(control, QPlainTextEdit) else control.value()
                       for name, control in self.parameters.items()})
+        if any(len(value) > 4096 for value in state.values() if isinstance(value, str)):
+            self.status.setText('Sample text is limited to4096 characters per field.'); return
         if len(state['text']) > 4096:
             self.status.setText('Sample text is limited to4096 characters.'); return
         try:
+            if key == 'profile':
+                for name, control in self.parameters.items(): self.extra_form.setRowVisible(control, mode_parameter_visible(name, state['view']))
+                self.form.setRowVisible(self.selected, state['view'] == 4)
+                self.form.setRowVisible(self.cursor, state['view'] in (1, 2, 5))
+                for name, maximum in mode_limits(self.library, state).items():
+                    control = self.selected if name == 'selected' else self.parameters[name]
+                    control.blockSignals(True); control.setMaximum(maximum); control.blockSignals(False); state[name] = control.value()
             if key == 'extras':
                 for name, control in self.parameters.items(): self.extra_form.setRowVisible(control, extras_parameter_visible(name, state['view']))
                 for name, maximum in extras_limits(self.library, state).items():

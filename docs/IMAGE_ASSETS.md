@@ -45,6 +45,16 @@ Choose **Images… → UI compositions…**. Implemented compositions include:
   category/page/cell/variant controls select CGs. Other lists expose selection and
   scrolling. Unlock/new flags and music position/mode are preview samples, without
   reading personal progress or playing movies, audio or battle replays.
+- **Profiles / approach:** profile selection/confirmation, result and response UI;
+  approach mission/gauge, topics/choices and result. Choose **Screen**. Profiles
+  read the original scene/event/item tables; the carousel selector's focused item
+  is `(selector + 3) % 10`. Scene and character ordinal controls clamp to available
+  rows. Stat `-1` uses authored initial values; explicit values are preview samples.
+  Approach topics use one line per topic: `Topic | Choice1 | Choice2 | Choice3`, up
+  to six topics and three children. Child focus/read/used flags show their variants.
+  Topics/result text may start from matching commands in the current script.
+  Response view composes the response window/text; external actors/backgrounds
+  are not reconstructed. Choose a context backdrop to inspect it against a scene.
 
 Choose a background/CG for context in non-title previews, or leave the
 neutral matte. Context backdrops are selected explicitly; they do not claim to
@@ -59,8 +69,8 @@ it in the individual-image browser. Layouts keep texture identities separate fro
 pixels so future replacement previews can resolve the same identities; replacement
 editing/import/reinjection is not available yet.
 
-**UI families** tracks implemented and pending adapters. Profiles/approach and
-battle remain pending. Choosing one reports that status and clears the preview.
+**UI families** tracks implemented and pending adapters. Battle remains pending.
+Choosing it reports that status and clears the preview.
 It does not substitute an unrelated layout. Coverage/diagnostics also identifies
 omitted title particles/live submenus and text decorations or reveal effects.
 Static composition does not provide menu actions or full native scene playback.
@@ -74,6 +84,9 @@ this is not a Vita/PC pixel-parity test. **Refresh layouts** rereads environment
 snapshots. Reload the game to import externally changed font/text settings, and
 re-index images for changed source textures. Source switches invalidate pending
 work; current preview textures use bounded caches and cancellable loading.
+Profile/approach result content follows texture-alpha stencil coverage, and result
+text retains inline color ranges. Snapshots show settled results, without executing
+their reveal/voice/fade timelines or publishing gameplay state.
 
 List controls expose a static scroll-channel sample and an optional first visible
 row (`-1` chooses automatically). Cards use their authored viewport clip; layer

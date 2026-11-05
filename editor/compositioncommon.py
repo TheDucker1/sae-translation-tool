@@ -18,22 +18,25 @@ def quad(name, asset, source, destination, rgba=(255, 255, 255, 255)):
     return Layer(name, asset=asset, source=list(source), destination=list(destination), rgba=list(rgba))
 
 
-def plain_layer(name, value, origin, width, scale, rgba, font):
+def plain_layer(name, value, origin, width, scale, rgba, font, *, font_tags=False):
     """Reuse the Python line formatter with native line-height and glyph-cell drawing."""
     if font is None: raise ImageError('Load original font/layout data before composing text')
     value = value.replace('\r\n', '\n').replace('\n', font.format.break_char)
-    text, ranges = font.format.prepare(value)
+    text, ranges = font.format.prepare(value, font_tags=font_tags)
     glyphs = font.layout(text, width, scale)
     size = int(font.utility * scale)
     if not 0 < size <= 1024: raise ImageError('Text scale outside composition range')
     height = (max((g['line'] for g in glyphs), default=-1) + 1) * int(font.height * scale + font.leading)
     layer = Layer(name, kind='text', text=unicode_text(text), size=size,
                   destination=[*origin, width, height], rgba=list(rgba))
-    for g in glyphs:
+    for index, g in enumerate(glyphs):
         c = chr(g['code']); cached_glyph = font.cached.get(c)
         drawn = math.ceil(cached_glyph[3] * size / font.bitmap_height) if cached_glyph else (
             size // 2 if 0x20 <= g['code'] <= 0x7e or 0xff61 <= g['code'] <= 0xffa0 else size)
-        layer.glyphs.append(dict(code=g['code'], rect=[origin[0] + g['x'], origin[1] + g['y'], drawn, size]))
+        glyph = dict(code=g['code'], rect=[origin[0] + g['x'], origin[1] + g['y'], drawn, size])
+        for start, end, rgb in ranges:
+            if start <= index < end: glyph['rgb'] = rgb; break
+        layer.glyphs.append(glyph)
     return layer, height
 
 

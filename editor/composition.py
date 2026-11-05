@@ -21,7 +21,7 @@ FAMILIES = (
     ('backlog', 'Backlog', 'Implemented: clipped sample dialogue rows, selection, voice icons and scrollbars'),
     ('settings', 'Settings / help', 'Implemented: text/audio/voice pages, header variants and authored help; fourth tab has no source page content'),
     ('extras', 'Extras', 'Implemented: section menu, CG album/viewer, movie thumbnails, music and replay list; preview unlock/playback flags'),
-    ('profile', 'Profiles / approach', 'Pending: profile / approach / result layouts'),
+    ('profile', 'Profiles / approach', 'Implemented: profile selection/confirmation/result/response UI, approach mission/gauge/topics/choices/result; settled snapshots'),
     ('battle', 'Battle', 'Pending: introduction / choices / result layouts'),
 )
 IMPLEMENTED_FAMILIES = frozenset(key for key, _, status in FAMILIES if status.startswith(('Implemented', 'Partial')))
@@ -43,6 +43,7 @@ class Layer:
     blend: str = 'normal'
     target: str = ''
     children: list = field(default_factory=list)
+    mask: str = ''  # full-canvas target; native alpha > 0 stencil coverage
 
 
 def walk_layers(layers, depth=0):
@@ -155,7 +156,8 @@ class EnvironmentLibrary:
                 from .compositionlists import ADAPTERS as LIST_ADAPTERS
                 from .compositionsettings import ADAPTERS as SETTINGS_ADAPTERS
                 from .compositionextras import ADAPTERS as EXTRAS_ADAPTERS
-                result = (ADAPTERS | LIST_ADAPTERS | SETTINGS_ADAPTERS | EXTRAS_ADAPTERS)[family](self, state, font)
+                from .compositionmodes import ADAPTERS as MODE_ADAPTERS
+                result = (ADAPTERS | LIST_ADAPTERS | SETTINGS_ADAPTERS | EXTRAS_ADAPTERS | MODE_ADAPTERS)[family](self, state, font)
         except (KeyError, IndexError) as error:
             raise ImageError(f'{family}: source layout tables are incomplete or a selector is outside their range ({error})') from error
         result.sources = {k: v[2] for k, v in self.files.items()} | self.member_sources

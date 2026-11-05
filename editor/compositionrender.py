@@ -117,6 +117,16 @@ def render_composition(composition, textures, font_consumer=None, *, _targets=No
                 target, child_issues = render_composition(child, textures, font_consumer, _targets=targets, _depth=_depth + 1)
                 targets['@target:' + layer.target] = target; issues.extend(child_issues); continue
             if not layer.rgba[3] and layer.blend != 'multiply': continue
+            if layer.mask:
+                coverage = targets.get(layer.mask)
+                if coverage is None: raise ImageError('Composition mask target is unavailable: ' + layer.mask)
+                source, child_issues = render_composition(Composition('Masked content', layers=[replace(layer, mask='')], clear=(0, 0, 0, 0)),
+                                                         textures, font_consumer, _targets=targets, _depth=_depth + 1)
+                issues.extend(child_issues)
+                raw = bytearray(source.constBits()); alpha = raw[3::4]; mask = bytes(coverage.constBits())[3::4]
+                raw[3::4] = bytes(a if m else 0 for a, m in zip(alpha, mask))
+                source = QImage(bytes(raw), 960, 544, 960 * 4, QImage.Format_RGBA8888).copy()
+                p.drawImage(0, 0, source); continue
             if layer.blend == 'multiply':
                 if layer.kind not in ('sprite', 'solid'): raise ImageError('Multiply requires a quad primitive')
                 source, child_issues = render_composition(Composition('Multiply source', layers=[replace(layer, blend='normal')], clear=(0, 0, 0, 0)),
@@ -149,7 +159,7 @@ def render_composition(composition, textures, font_consumer=None, *, _targets=No
                     if font_consumer is None:
                         issues.append('Original font is unavailable; text layers were not drawn.'); continue
                     for glyph in layer.glyphs:
-                        image = font_consumer.glyph(glyph['code'], layer.rgba[:3])
+                        image = font_consumer.glyph(glyph['code'], glyph.get('rgb', layer.rgba[:3]))
                         if image is None:
                             issues.append(f"Missing font glyph U+{glyph['code']:04X}"); continue
                         p.drawImage(QRectF(*glyph['rect']), image)

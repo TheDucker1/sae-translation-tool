@@ -879,6 +879,10 @@ class Window(QMainWindow):
         examples={}
         choice=command if command and command['opcode']==0x65 else next((c for c in self.commands if c['opcode']==0x65),None)
         if choice:examples['choices']='\n'.join(row['label'] for row in choice['args']['choices'])
+        approach=command if command and command['opcode']==0x3f6 else next((c for c in self.commands if c['opcode']==0x3f6),None)
+        if approach:examples['profile:topics']='\n'.join(' | '.join([row['label']]+[child['label'] for child in row['children']]) for row in approach['args']['parents'])
+        result=command if command and command['opcode']==0x3f8 else next((c for c in self.commands if c['opcode']==0x3f8),None)
+        if result:examples['profile:result_text']=result['args']['outcomes'][0]['text']
         chapter=command if command and command['opcode']==0x3ec else next((c for c in self.commands if c['opcode']==0x3ec),None)
         if chapter:examples['calendar']='\n'.join(chapter['args']['texts']);examples['system']=chapter['args']['texts'][-1]
         retained=[];budget=4096
