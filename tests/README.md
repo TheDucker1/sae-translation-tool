@@ -25,6 +25,7 @@ Run the affected module, for example:
 .\.venv\Scripts\python.exe -X utf8 -m unittest tests.test_texture_projects -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_texture_export.py -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_ui_text.py -v
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_pvf_preview.py -v
 ```
 
 Translator/MCP checks require `requirements-mcp.txt`. Run a focused check when
@@ -59,3 +60,7 @@ UI text checks cover UTF16 lengths/non-BMP text, native quote/CRLF table handlin
 CP932/placeholder/protected-field rejection, atomic batches and source fingerprints,
 mixed script/UI Undo/reopen, effective environment reads, combined texture/script/
 catalogue/environment export with seek repair, and human/agent draft conflicts.
+
+PVF preview checks distinguish full sampled cache cells from half-width draw
+advances, fractional packed-column widths, duplicate charset entries and cropped
+sampling borders. They use synthetic font tables/pixels, not original fonts.

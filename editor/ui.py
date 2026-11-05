@@ -171,10 +171,10 @@ class Preview(QWidget):
             else:
                 raw = bytes.fromhex(data['rgba'])
                 img = QImage(raw, data['width'], data['height'], data['width'] * 4, QImage.Format_RGBA8888).copy()
-                self.glyph_cache[code] = (img, data['bitmap'])
+                self.glyph_cache[code] = (img, data['bitmap'],data.get('source',[0,0,data['width'],data['height']]))
         cached = self.glyph_cache[code]
         if cached is None: return None
-        img, bitmap = cached
+        img, bitmap, source = cached
         if bitmap:
             # Cached symbol atlases retain RGB; generated glyphs supply alpha.
             tinted = img.convertToFormat(QImage.Format_RGBA8888)
@@ -224,7 +224,7 @@ class Preview(QWidget):
             try: image=self.image(g['code'],g['color'][:3])
             except RuntimeError: image=None
             if image is not None:
-                p.setOpacity(g['color'][3]/255); p.drawImage(QRectF(*g['rect']),image)
+                p.setOpacity(g['color'][3]/255); p.drawImage(QRectF(*g['rect']),image,QRectF(*self.glyph_cache[g['code']][2]))
         p.setOpacity(1); p.end()
 
 

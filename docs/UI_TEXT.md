@@ -49,6 +49,8 @@ is rejected; your draft remains available until you reselect/Refresh.
   use their authored separators; ordinary UI labels do not become multiline just
   by typing LF. Preview the appropriate screen and keep translations concise.
   This browser does not auto-fit UI text or alter rectangles/font metrics.
+  Preview glyphs use the player's PVF cache-cell sampling and half/full-width
+  draw geometry; Qt outline antialiasing can still differ from the game.
 - CG titles cannot be empty because native catalogue loading would omit the
   entry. Combined profile-result text is checked against its native buffer.
   Other fields have a4096 UTF16-unit editing limit; this is not a promise they

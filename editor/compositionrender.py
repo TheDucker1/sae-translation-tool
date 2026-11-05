@@ -119,6 +119,10 @@ class FontConsumer:
         while len(self.cache) >= 512: self.cache.popitem(last=False)
         self.cache[key] = image; return image
 
+    def source_rect(self,code,image):
+        if chr(code) in self.font.cached:return [0,0,image.width(),image.height()]
+        return self.font.glyph(code).get('source',[0,0,image.width(),image.height()])
+
 
 def render_composition(composition, textures, font_consumer=None, *, _targets=None, _depth=0):
     """Normal UI source-over quads, crop/flip, RGB multiply, opacity and pivot rotation."""
@@ -181,7 +185,7 @@ def render_composition(composition, textures, font_consumer=None, *, _targets=No
                         image = font_consumer.glyph(glyph['code'], glyph.get('rgb', layer.rgba[:3]))
                         if image is None:
                             issues.append(f"Missing font glyph U+{glyph['code']:04X}"); continue
-                        p.drawImage(QRectF(*glyph['rect']), image)
+                        p.drawImage(QRectF(*glyph['rect']), image,QRectF(*font_consumer.source_rect(glyph['code'],image)))
                 elif layer.kind == 'solid':
                     p.fillRect(QRectF(*layer.destination), QColor(*layer.rgba[:3]))
                 elif layer.kind == 'sprite':

@@ -109,8 +109,10 @@ punctuation and underscore stay unchanged (full-width underscore is a newline).
 Full-width words remain word-based; more pages/advance steps may be necessary.
 Review proposal warnings and single-line overflow. Timed/queued/retained-buffer
 Auto-fit rows remain read-only; no unsupported breaks or cue rescheduling.
-Qt preview uses the original font but approximates raster coverage/cropping;
-the new player's legacy grayscale rasterizer has not been ported to this tool.
+Preview samples the original font's full PVF cache cells, including for half-width
+Latin, with the player's cell metrics/baseline and separate source/destination
+rectangles. GSF bitmap overrides retain their authored geometry. Qt still supplies
+outline antialiasing; the player's legacy grayscale rasterizer has not been ported.
 
 For actual proportional DIALOGUE spacing, use analyze_text_cleanup with
 proportional_latin=true. It generates a Font.gsf bitmap asset, applies supported

@@ -88,7 +88,10 @@ Rendering uses shared crop/anchor/scale/tint/opacity/rotation primitives and
 clamped texture edges. Extras headers also use offscreen targets and the authored
 RGBA multiply blend. Their contributing source layers are inspectable individually;
 the generated target itself has no separate source image. Text reuses the editor's
-font data and Qt rasterization; this is not a Vita/PC pixel-parity test.
+font data and Qt rasterization; this is not a Vita/PC pixel-parity test. PVF glyphs
+use full precache cells and the player's half/full-width draw rule, rather than
+stretching a Latin glyph's own narrow outline to fill its destination. Cell/source
+rectangles and baseline match the implementation; antialias coverage can differ.
 **Refresh layouts** rereads environment
 snapshots. Reload the game to import externally changed font/text settings, and
 re-index images for changed source textures. Source switches invalidate pending
