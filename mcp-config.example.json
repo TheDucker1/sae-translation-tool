@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "saekano-translator": {
+      "command": "C:\\path\\to\\saekano-script-editor\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\path\\to\\saekano-script-editor\\run_mcp.py",
+        "--usrdir",
+        "C:\\path\\to\\USRDIR",
+        "--workspace",
+        "C:\\path\\to\\translation-workspace",
+        "--project",
+        "translation.saekano.json"
+      ],
+      "env": {
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}
