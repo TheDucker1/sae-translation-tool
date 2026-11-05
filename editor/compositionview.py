@@ -12,6 +12,7 @@ from .compositionlists import PARAMETERS as LIST_PARAMETERS, backlog_environment
 from .compositionsettings import PARAMETERS as SETTINGS_PARAMETERS, settings_environment, parameter_visible
 from .compositionextras import PARAMETERS as EXTRAS_PARAMETERS, preview_limits as extras_limits, parameter_visible as extras_parameter_visible
 from .compositionmodes import PARAMETERS as MODE_PARAMETERS, preview_limits as mode_limits, parameter_visible as mode_parameter_visible
+from .compositionbattle import PARAMETERS as BATTLE_PARAMETERS, parameter_visible as battle_parameter_visible, battle_environment
 from .compositionrender import AssetResolver, TextureLoader, FontConsumer, render_composition
 from .imageview import ImageCanvas, ImageJob
 
@@ -130,12 +131,13 @@ class CompositionBrowser(QDialog):
             self.press_start: key == 'title', self.progress: key in ('title', 'message', 'choices', 'dialogs'),
             self.angle: key in ('title', 'message'), self.speaker: key == 'message', self.opacity: key == 'message',
             self.chapter: key in ('system', 'calendar'), self.skip: key == 'message', self.auto: key == 'message',
-            self.cursor: key in ('message', 'profile'), self.text: key not in ('title', 'settings', 'extras', 'profile'), self.backdrop: key != 'title'}
+            self.cursor: key in ('message', 'profile'), self.text: key not in ('title', 'settings', 'extras', 'profile', 'battle'), self.backdrop: key != 'title'}
         self.cursor.setEnabled(key in ('message', 'profile'))
         for widget, visible in common.items(): self.form.setRowVisible(widget, visible)
         while self.extra_form.rowCount(): self.extra_form.removeRow(0)
         self.parameters = {}
-        for name, label, kind, default, *bounds in (PARAMETERS | LIST_PARAMETERS | SETTINGS_PARAMETERS | EXTRAS_PARAMETERS | MODE_PARAMETERS).get(key, ()):
+        for name, label, kind, default, *bounds in (PARAMETERS | LIST_PARAMETERS | SETTINGS_PARAMETERS | EXTRAS_PARAMETERS | MODE_PARAMETERS | BATTLE_PARAMETERS).get(key, ()):
+            default = self.family_text.get(key + ':' + name, default)
             if kind == 'bool': control = QCheckBox(); control.setChecked(default); control.toggled.connect(self.changed)
             elif kind == 'text':
                 control = QPlainTextEdit(); control.setMaximumHeight(130)
@@ -179,6 +181,13 @@ class CompositionBrowser(QDialog):
         if len(state['text']) > 4096:
             self.status.setText('Sample text is limited to4096 characters.'); return
         try:
+            if key == 'battle':
+                for name, control in self.parameters.items(): self.extra_form.setRowVisible(control, battle_parameter_visible(name, state['view']))
+                self.form.setRowVisible(self.opacity, state['view'] == 1); self.opacity.setEnabled(state['view'] == 1)
+                env = cached(self.library, 'battle_ui', 'env/env_tukkomi.dat', battle_environment)
+                limit = min(len(env[name]) for name in ('names', 'name_sizes', 'name_offsets', 'colors')) - 1
+                for name in ('side_0', 'side_1'):
+                    control = self.parameters[name]; control.blockSignals(True); control.setMaximum(limit); control.blockSignals(False); state[name] = control.value()
             if key == 'profile':
                 for name, control in self.parameters.items(): self.extra_form.setRowVisible(control, mode_parameter_visible(name, state['view']))
                 self.form.setRowVisible(self.selected, state['view'] == 4)

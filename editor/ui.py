@@ -883,6 +883,19 @@ class Window(QMainWindow):
         if approach:examples['profile:topics']='\n'.join(' | '.join([row['label']]+[child['label'] for child in row['children']]) for row in approach['args']['parents'])
         result=command if command and command['opcode']==0x3f8 else next((c for c in self.commands if c['opcode']==0x3f8),None)
         if result:examples['profile:result_text']=result['args']['outcomes'][0]['text']
+        versus=command if command and command['opcode']==0x3f9 else next((c for c in self.commands if c['opcode']==0x3f9),None)
+        if versus:
+            for side,value in enumerate(versus['args']['texts']):examples['battle:caption_'+str(side)]=value
+        battle_choice=command if command and command['opcode']==0x3f2 else next((c for c in self.commands if c['opcode']==0x3f2),None)
+        if battle_choice:
+            from .progression import track_number
+            examples['battle:choices']='\n'.join(row['label'] for row in battle_choice['args']['choices'][1:])
+            for i,row in enumerate(battle_choice['args']['choices'][1:]):
+                kind=track_number(row['extras'][0]) if row['extras'] else 0
+                examples['battle:type_'+str(i)]=kind if 0<=kind<=2 else 3
+        entry=next((c for c in self.commands if c['opcode']==0x3ef),None)
+        if entry:
+            for side in range(2):examples['battle:side_'+str(side)]=entry['args']['side'+str(side)+'_group']
         chapter=command if command and command['opcode']==0x3ec else next((c for c in self.commands if c['opcode']==0x3ec),None)
         if chapter:examples['calendar']='\n'.join(chapter['args']['texts']);examples['system']=chapter['args']['texts'][-1]
         retained=[];budget=4096

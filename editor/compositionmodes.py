@@ -148,6 +148,7 @@ def mode_result(out, library, e, state, font, text, *, profile=None):
 
 
 def profile_layout(library, state, font):
+    if font is None: raise ImageError('Original font/layout data is required')
     e = cached(library, 'profile_ui', 'env/env_otaku_mode.dat', profile_environment)
     view = state.get('view', 0)
     if view >= 3: return approach_layout(library, state, font)

@@ -55,6 +55,14 @@ Choose **Images… → UI compositions…**. Implemented compositions include:
   Topics/result text may start from matching commands in the current script.
   Response view composes the response window/text; external actors/backgrounds
   are not reconstructed. Choose a context backdrop to inspect it against a scene.
+- **Battle:** introduction emblems/name/caption panels, dialogue bubbles/text,
+  timed-choice cards/HUD/countdown and left-win/right-win/equal result lettering.
+  **Screen** selects the view. Participant IDs, captions, bubble/card types,
+  multiline dialogue, choice text, read colors, timer and pulse samples affect only
+  this snapshot. Introduction/choice samples can start from current-file commands.
+  Visible choice cards represent rows1–3; row0 is the timeout route and has no card.
+  Divider X is a display sample, independent of the logical battle score. Actors,
+  Live2D poses and actual timer/input/media playback are not reconstructed.
 
 Choose a background/CG for context in non-title previews, or leave the
 neutral matte. Context backdrops are selected explicitly; they do not claim to
@@ -69,18 +77,18 @@ it in the individual-image browser. Layouts keep texture identities separate fro
 pixels so future replacement previews can resolve the same identities; replacement
 editing/import/reinjection is not available yet.
 
-**UI families** tracks implemented and pending adapters. Battle remains pending.
-Choosing it reports that status and clears the preview.
-It does not substitute an unrelated layout. Coverage/diagnostics also identifies
-omitted title particles/live submenus and text decorations or reveal effects.
+**UI families** records coverage and limitations for all twelve implemented screen
+families. These include variants, rather than every story scene. Ending prompts
+and save screens reuse the shared-dialog and save/load layouts. Coverage/diagnostics
+identifies omitted title particles and text decorations or reveal effects.
 Static composition does not provide menu actions or full native scene playback.
 
 Rendering uses shared crop/anchor/scale/tint/opacity/rotation primitives and
 clamped texture edges. Extras headers also use offscreen targets and the authored
 RGBA multiply blend. Their contributing source layers are inspectable individually;
 the generated target itself has no separate source image. Text reuses the editor's
-font data and Qt rasterization;
-this is not a Vita/PC pixel-parity test. **Refresh layouts** rereads environment
+font data and Qt rasterization; this is not a Vita/PC pixel-parity test.
+**Refresh layouts** rereads environment
 snapshots. Reload the game to import externally changed font/text settings, and
 re-index images for changed source textures. Source switches invalidate pending
 work; current preview textures use bounded caches and cancellable loading.

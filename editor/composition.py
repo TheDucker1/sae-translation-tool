@@ -22,7 +22,7 @@ FAMILIES = (
     ('settings', 'Settings / help', 'Implemented: text/audio/voice pages, header variants and authored help; fourth tab has no source page content'),
     ('extras', 'Extras', 'Implemented: section menu, CG album/viewer, movie thumbnails, music and replay list; preview unlock/playback flags'),
     ('profile', 'Profiles / approach', 'Implemented: profile selection/confirmation/result/response UI, approach mission/gauge/topics/choices/result; settled snapshots'),
-    ('battle', 'Battle', 'Pending: introduction / choices / result layouts'),
+    ('battle', 'Battle', 'Implemented: introduction, dialogue bubbles/text, timed-choice cards/HUD/countdown and win/lose/equal result lettering; static UI only'),
 )
 IMPLEMENTED_FAMILIES = frozenset(key for key, _, status in FAMILIES if status.startswith(('Implemented', 'Partial')))
 
@@ -157,7 +157,8 @@ class EnvironmentLibrary:
                 from .compositionsettings import ADAPTERS as SETTINGS_ADAPTERS
                 from .compositionextras import ADAPTERS as EXTRAS_ADAPTERS
                 from .compositionmodes import ADAPTERS as MODE_ADAPTERS
-                result = (ADAPTERS | LIST_ADAPTERS | SETTINGS_ADAPTERS | EXTRAS_ADAPTERS | MODE_ADAPTERS)[family](self, state, font)
+                from .compositionbattle import ADAPTERS as BATTLE_ADAPTERS
+                result = (ADAPTERS | LIST_ADAPTERS | SETTINGS_ADAPTERS | EXTRAS_ADAPTERS | MODE_ADAPTERS | BATTLE_ADAPTERS)[family](self, state, font)
         except (KeyError, IndexError) as error:
             raise ImageError(f'{family}: source layout tables are incomplete or a selector is outside their range ({error})') from error
         result.sources = {k: v[2] for k, v in self.files.items()} | self.member_sources
