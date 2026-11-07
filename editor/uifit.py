@@ -26,7 +26,7 @@ def fixed_width(text,size):
     return sum(size//2 if 0x20<=ord(c)<=0x7e or 0xff61<=ord(c)<=0xffa0 else size for c in units(text))
 
 
-def wrap_tip(text,separator,columns,width,size,*,reflow=False,hyphenate=True):
+def wrap_tip(text,separator,columns,width,size,*,reflow=False,hyphenate=True,max_rows=3):
     """Three explicit native rows, bounded by pixels AND UTF16 split count."""
     if not separator or columns<1 or size<2 or width<size:raise ValueError('Invalid profile tips geometry')
     text=text.replace('\r\n','\n').replace('\r','\n').replace('\n',separator)
@@ -49,7 +49,7 @@ def wrap_tip(text,separator,columns,width,size,*,reflow=False,hyphenate=True):
                 rows.append(word[:cut]+'-');word=word[cut:]
             line=word
         rows.append(line)
-    if len(rows)>3:raise ValueError(f'Profile tips need {len(rows)} rows; native panel has three. Shorten the description.')
+    if len(rows)>max_rows:raise ValueError(f'Text needs {len(rows)} rows; native panel has {"three" if max_rows==3 else max_rows}. Shorten the description.')
     return dict(text=separator.join(rows),lines=rows,width=width,size=size,columns=columns,
                 line_widths=[fixed_width(row,size) for row in rows])
 

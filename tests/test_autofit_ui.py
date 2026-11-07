@@ -29,7 +29,7 @@ class AutoFitUiChecks(unittest.TestCase):
             (root/'env/env_global.dat').write_bytes(global_fixture())
             (root/'env/env_game_utility.dat').write_bytes(bytes(3)+struct.pack('<i',27))
             p._ui_text_catalog=None;c=get_catalog(p);identity='first.dat:3/0#s1'
-            font=font_fixture();font.utility=27;p._ui_style_font=((p.root,p.font_asset['manifest']['font_sha256']),font)
+            font=font_fixture();font.charset.update(map(chr,range(32,127)));font.utility=27;p._ui_style_font=((p.root,p.font_asset['manifest']['font_sha256']),font)
             p.set_ui_texts([(identity,c.fields[identity]['original'],'A hostess plots her rise.')])
             before=p.ui_text_assets.copy();history=len(p.undo_stack)
             with patch('editor.fontpatch.effective_font',return_value=font):

@@ -324,6 +324,8 @@ class Window(QMainWindow):
         self.pause(); path=str(Path(self.folder.text()).expanduser().resolve()); self.preview.clear()
         if not Path(path,'resource.dat').is_file(): self.problem('Select the USRDIR folder containing resource.dat.'); return
         if self.image_panel:self.image_panel.invalidate()
+        if getattr(self,'_ui_fit_preview',None):self._ui_fit_preview.invalidate()
+        self._ui_fit_image_catalog=None
         self.state_line.setText('Loading original scripts and text settings…'); self.centralWidget().setEnabled(False); self.view={}
         self.worker=Loader(self.session,path); self.worker.ready.connect(self.loaded); self.worker.failed.connect(self.load_failed); self.worker.start()
 
@@ -462,11 +464,13 @@ class Window(QMainWindow):
         self.setWindowTitle('Saekano Script Studio — edited project'+(' *' if self.project.saved_revision!=self.project.revision else ''))
         if self.image_panel:self.image_panel.set_project(self.project)
         if self.ui_text_panel:self.ui_text_panel.set_project(self.project)
+        if getattr(self,'_ui_fit_preview',None):self._ui_fit_preview.invalidate()
 
     def textures_edited(self,previous_revision):
         if self.preview_revision==previous_revision:self.preview_revision=self.project.revision
         if self.image_panel:self.image_panel.set_project(self.project)
         if self.ui_text_panel:self.ui_text_panel.set_project(self.project)
+        if getattr(self,'_ui_fit_preview',None):self._ui_fit_preview.invalidate()
         self.setWindowTitle('Saekano Script Studio — texture project'+(' *' if self.project.saved_revision!=self.project.revision else ''))
         self.statusBar().showMessage('Project texture updated; save the project to keep it. Game files and scenario state unchanged.')
 
@@ -865,6 +869,8 @@ class Window(QMainWindow):
         if self.mcp_panel and not self.mcp_panel.shutdown():event.ignore();return
         if self.image_panel and not self.image_panel.shutdown():
             self.statusBar().showMessage('Cancelling image operation; close again after it finishes.');event.ignore();return
+        if getattr(self,'_ui_fit_preview',None) and not self._ui_fit_preview.shutdown():
+            self.statusBar().showMessage('Cancelling UI preview; close again after it finishes.');event.ignore();return
         if hasattr(self,'worker') and self.worker.isRunning():self.worker.wait()
         super().closeEvent(event)
 

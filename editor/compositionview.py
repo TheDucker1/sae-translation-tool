@@ -80,7 +80,7 @@ class CompositionBrowser(QDialog):
         for check in (self.press_start, self.skip, self.auto, self.cursor): check.toggled.connect(self.changed)
         self.backdrop.currentIndexChanged.connect(self.changed); self.text.textChanged.connect(self.changed)
 
-    def set_context(self, catalog, font, sample_text='', focus=None, sample_speaker=-1, samples=None, replacements=None, ui_text_assets=None,ui_text_catalog=None):
+    def set_context(self, catalog, font, sample_text='', focus=None, sample_speaker=-1, samples=None, replacements=None, ui_text_assets=None,ui_text_catalog=None,*,defer=False):
         self.invalidate()
         self.catalog = catalog; self.font = font; self.font_consumer = FontConsumer(font) if font else None
         self.replacements = dict(replacements or {})
@@ -112,7 +112,8 @@ class CompositionBrowser(QDialog):
             if bank == 13 and 62 <= focus.route[-1] <= 72: key = 'slots'
             if bank == 13 and 25 <= focus.route[-1] <= 61: key = 'settings'
             if bank == 1 and 41 <= focus.route[-1] <= 49: self.speaker.setValue(focus.route[-1] - 41)
-        self.family.setCurrentIndex(self.family.findData(key)); self.configure_family(); self.timer.stop(); self.rebuild()
+        self.family.setCurrentIndex(self.family.findData(key)); self.configure_family(); self.timer.stop()
+        if not defer:self.rebuild()
 
     def set_replacements(self, replacements, font=None,ui_text_assets=None,ui_text_catalog=None):
         self.replacements = dict(replacements)
@@ -170,6 +171,20 @@ class CompositionBrowser(QDialog):
 
     def changed(self, *_):
         if self.catalog: self.timer.start()
+
+    def show_recipe(self,recipe,text=None):
+        """Open a source-bound text consumer using the existing composition UI."""
+        self.family.setCurrentIndex(self.family.findData(recipe['family']));self.configure_family()
+        common=dict(selected=self.selected,character=self.variant,chapter=self.chapter,text=self.text)
+        for name,value in recipe.get('state',{}).items():
+            control=self.parameters.get(name,common.get(name))
+            if control is None:continue
+            if isinstance(control,QComboBox):control.setCurrentIndex(control.findData(value))
+            elif isinstance(control,QCheckBox):control.setChecked(value)
+            elif isinstance(control,QPlainTextEdit):control.setPlainText(value)
+            else:control.setValue(value)
+        if recipe.get('text_parameter')=='text' and text is not None:self.text.setPlainText(text)
+        self.timer.stop();self.rebuild();self.show();self.raise_();self.activateWindow()
 
     def refresh(self):
         if self.catalog:

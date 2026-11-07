@@ -348,6 +348,27 @@ class TranslationWorkspace:
         return self.visual_context(expected_catalog_revision).scene(self,family,state,include_image,max_size,limit)
 
     @locked
+    def get_ui_text_preview(self,field_id:Id,plan_id:Id|None=None,include_image:bool=True,
+                            max_size:Annotated[int,Field(ge=64,le=2048,strict=True)]=1024,limit:Limit=30)->dict[str,Any]:
+        """Preview a field's source-bound screen, optionally with an unapplied Auto-fit plan. Returns image plus layer/geometry data. No project mutation. Missing native context rejects explicitly; never invents a scene."""
+        from copy import copy
+        from collections import OrderedDict
+        import threading
+        from .uipreview import preview_snapshot
+        plan=None
+        if plan_id is not None:
+            plan=getattr(self,'_cleanup_plans',{}).get(plan_id)
+            if plan is None:raise ValueError('Unknown/expired cleanup plan; analyze again')
+        project,recipe,_,_=preview_snapshot(self.project,field_id,plan=plan)
+        base=self.visual_context();view=copy(self);view.project=project
+        context=copy(base);context.project_revision=None;context.scenes=OrderedDict();context.local=threading.local()
+        context.bind(view);result=context.scene(view,recipe['family'],recipe['state'],include_image,max_size,limit)
+        result.update(field_id=field_id,proposal_plan_id=plan_id,read_only_preview=True)
+        base.scenes.update(context.scenes)
+        while len(base.scenes)>8:base.scenes.popitem(last=False)
+        return result
+
+    @locked
     def get_ui_scene_layers(self,scene_id:Id,start:Index=0,limit:Limit=30,include_glyphs:bool=False,
                             kind:Literal['all','text','sprite','solid','target']='all')->dict[str,Any]:
         """Page the exact scene snapshot: draw order/pass, texture/target/mask, crop/position/size/clip/rotation/color, and text/style. Optional glyphs provide codepoints/rectangles/colors. Stale/evicted snapshots reject."""

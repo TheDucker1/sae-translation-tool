@@ -26,11 +26,11 @@ def word(n):return struct.pack('<I',n)
 
 def global_fixture():
     return (bytes(3)+string('Global')*4+bytes(8)+string('UI')*9+bytes(120)+word(0)+bytes(32)
-        +word(0)+bytes(16)+word(0)+word(0)+string(' ')+bytes(8)+string('Yes')+string('No')+string('＿'))
+        +word(0)+bytes(16)+word(0)+word(2)+string('①')+string('②')+string(' ')+struct.pack('<fi',.7,8)+string('Yes')+string('No')+string('＿'))
 def items(texts):return word(len(texts))+b''.join(word(i)+string(v) for i,v in enumerate(texts))
 def rows(values):return word(len(values))+b''.join(items(v) for v in values)
 def help_fixture():
-    rect=bytes(16)
+    rect=struct.pack('<4i',0,516,960,28)
     return bytes(47)+rect+items(['Move cursor','Confirm'])+rect+rows([['Apply settings'],['Switch tabs']])+rect+rows([['Save'],['Load']])+rect+items(['Extras'])+(rect+rows([['Select']]))*2+rows([['Play']])+rect+rows([['Replay']])+rows([['Calendar']])+items(['Choose'])+items(['Start'])+rows([['Skip']])
 
 
@@ -71,7 +71,7 @@ class UiText(unittest.TestCase):
             label=next(f for f in c.fields.values() if f['source'].endswith('env_otaku_mode.dat') and f['original']=='Before')
             p.set_ui_texts([(setting['field_id'],'8','16'),(label['field_id'],'Before','A much longer label')])
             self.assertEqual(c.fields['first.dat:3/0#s1']['fit_policy'],'profile_tips')
-            self.assertEqual(c.fields['env/env_help_mgr.dat:#s0']['fit_policy'],'font_only')
+            self.assertEqual(c.fields['env/env_help_mgr.dat:#s0']['fit_policy'],'consumer_checked')
             library=EnvironmentLibrary(root,ui_text_assets=p.ui_text_assets,ui_text_catalog=c)
             env=library.read('env/env_otaku_mode.dat');self.assertEqual(profile_environment(env)['columns'],16)
             self.assertIn('A much longer label',[s.text for s in counted_spans(env,profile_environment)])

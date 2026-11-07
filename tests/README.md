@@ -82,3 +82,9 @@ atomic mixed UI/layout Undo/reopen and matching preview/export environment bytes
 PVF preview checks distinguish full sampled cache cells from half-width draw
 advances, fractional packed-column widths, duplicate charset entries and cropped
 sampling borders. They use synthetic font tables/pixels, not original fonts.
+
+UI consumer fitting checks cover normalization before measurement, single-line
+constraints, native multiline height, formatted operand preservation, grouped help,
+source-parser field provenance, panel-alpha/cursor exclusions and revision-bound
+proposal previews without project mutation. Run the focused module with
+`$env:PYTHONPATH='tests'; .venv/Scripts/python -m unittest test_ui_fitting -q`.

@@ -30,6 +30,7 @@ class UiTextBrowser(QDialog):
         self.apply=QPushButton('Apply field');self.apply.clicked.connect(self.commit);footer.addWidget(self.apply)
         self.revert=QPushButton('Revert field');self.revert.clicked.connect(lambda:self.commit(True));footer.addWidget(self.revert)
         match=QPushButton('Match font in draft');match.clicked.connect(self.match_font);footer.addWidget(match)
+        preview=QPushButton('Preview field…');preview.clicked.connect(self.preview_field);footer.addWidget(preview)
         self.note=QLabel();self.note.setWordWrap(True);footer.addWidget(self.note,1)
 
     def refresh(self):
@@ -90,3 +91,16 @@ class UiTextBrowser(QDialog):
             proposal=ui_proposal(self.project,self.identity,self.edit.toPlainText(),None)
             self.edit.setPlainText(proposal['text']);self.note.setText(proposal['note']+' Apply field to save this draft.')
         except (ValueError,KeyError,OSError) as error:self.note.setText(str(error))
+
+    def preview_field(self):
+        if self.identity is None:return
+        try:
+            from .uipreview import show_ui_preview
+            self.owner.guard_edit_snapshot(self.project,self.revision)
+            plan=None;draft=self.edit.toPlainText()
+            if draft!=self.expected:
+                from .fontstyle import ui_proposal
+                text=ui_proposal(self.project,self.identity,draft,None)['text']
+                plan=dict(revision=self.revision,ui_changes=[dict(field_id=self.identity,after_text=text)])
+            show_ui_preview(self.owner,self.project,self.identity,plan=plan)
+        except (ValueError,RuntimeError,OSError) as error:self.note.setText(str(error))

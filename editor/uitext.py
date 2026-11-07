@@ -20,7 +20,7 @@ CATEGORIES=dict(env_help_mgr='Button help',env_global='Global UI / save descript
 
 class UiTextCatalog:
     def __init__(self,root):
-        self.root=Path(root).resolve();self.sources={};self.nodes={};self.fields={};self.coverage=[];self.issues=[];self._raw={};self._members={}
+        self.root=Path(root).resolve();self.sources={};self.nodes={};self.fields={};self.coverage=[];self.issues=[];self.consumer_issues=[];self._raw={};self._members={}
 
     def verify(self):
         if any(stamp(self.root/name)!=v['stamp'] for name,v in self.sources.items()):raise ValueError('UI text source changed; reload/re-index before editing or exporting')
@@ -87,11 +87,12 @@ class UiTextCatalog:
 
     def summary(self):
         return dict(fields=len(self.fields),editable=sum(f['editable'] for f in self.fields.values()),coverage=self.coverage,issues=self.issues,
+            consumer_issues=self.consumer_issues,
             renderer_counts={kind:sum(f['renderer']==kind for f in self.fields.values()) for kind in sorted({f['renderer'] for f in self.fields.values()})},
             fit_policy_counts={kind:sum(f['fit_policy']==kind for f in self.fields.values()) for kind in sorted({f['fit_policy'] for f in self.fields.values()})},
             notes=['Scenario opcode text remains in the script editor.',
                 'Baked texture lettering uses PNG replacements; executable literals and personal-save text are not asset fields.',
-                'fit_policy distinguishes profile-tip fitting from font-only normalization and unverified consumers. Other UI fit geometry is not implemented.',
+                'fit_policy distinguishes consumer-checked UI, profile-tip fitting, structured metadata and paths needing native context. Checked fields can still report overflow for a particular translation.',
                 'Known source schemas are parsed; coverage is not a claim of every native screen being playtested.'])
 
 
@@ -120,7 +121,8 @@ def build_catalog(root):
                 if len(a.entries)>2:
                     c.add(name,(2,0,0,0),'CG gallery titles',table=('utf-16-le',',','cg_titles'))
         except (ValueError,IndexError,struct.error) as e:c.issues.append(dict(source=name,error=str(e)))
-    c.verify();return c
+    from .uicontracts import annotate
+    annotate(c);c.verify();return c
 
 
 def get_catalog(project):
@@ -133,6 +135,8 @@ def make_record(c,identity,text):
     c.verify()
     if identity not in c.fields:raise ValueError('Unknown UI text field_id or changed source schema')
     f=c.fields[identity];n=c.nodes[f['node_id']];span=n['spans'][f['index']];encode_span(span,text)
+    from .uifitting import validate_structure
+    validate_structure(f,text)
     return dict(text=text,source_sha256=c.sources[f['source']]['sha256'],member_sha256=n['sha256'],
         offset=span.start,span_sha256=sha(n['data'][span.start:span.end]))
 
@@ -168,6 +172,9 @@ def effective_node(c,node_id,records,data=None):
                 args=iter((character,labels[2][index],labels[1][index]))
                 formatted=re.sub(r'%ls|%%',lambda m:'%' if m[0]=='%%' else next(args),pattern)
                 if len(formatted.encode('utf-16-le'))>=256:raise ValueError('Combined profile result labels exceed the native128-unit result buffer; shorten the labels/format')
+                if (c.root/'env/env_string_format.dat').is_file():
+                    from .text import TextFormat
+                    TextFormat(c.source('env/env_string_format.dat')).prepare(formatted,font_tags=True)
     return result
 
 

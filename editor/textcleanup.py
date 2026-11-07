@@ -243,46 +243,13 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
                         page_count=len(pages),capacity=capacity,dialogue_mode=mode,warnings=warnings))
             except (ValueError,KeyError,IndexError,OverflowError) as error:
                 plan['issues'].append(dict(script_id=sid,command_id=c.uid,reason=str(error)))
-    if include_ui and asset and project.ui_text_assets:
-        from .fontstyle import ui_proposal,UNKNOWN
-        from .uitext import get_catalog,make_record
-        from .uifit import profile_context,tip_geometry,wrap_tip
-        view=copy(project);view.font_asset=asset
-        catalog=get_catalog(project);context=profile_context(catalog,project.ui_text_assets);tip=None
-        descriptions=[key for key,record in project.ui_text_assets.items() if catalog.fields[key]['fit_policy']=='profile_tips'
-                      and not (skip_japanese and japanese_text(record['text'],font.format))]
-        if descriptions and context:
-            try:
-                tip=tip_geometry(catalog,font);field=context['field'];key=field['field_id']
-                columns=context['original']*2
-                view.ui_text_assets=project.ui_text_assets.copy()
-                view.ui_text_assets[key]=make_record(catalog,key,str(columns))
-                tip['columns']=columns
-                if context['columns']!=columns:
-                    plan['ui_changes'].append(dict(field_id=key,command_id=key,before_text=str(context['columns']),after_text=str(columns),
-                        renderer='layout_setting',note=f'Profile tips: {context["columns"]} -> {columns} character cap in the original {tip["width"]}px area. All untouched original rows are preserved. This shared setting is required for the wider tip proposals.'))
-            except (ValueError,KeyError,OSError) as error:
-                tip=None;plan['issues'].append(dict(script_id=None,command_id='Profile tips',reason=str(error)))
-        for identity,record in project.ui_text_assets.items():
-            try:
-                proposal=ui_proposal(view,identity,record['text'],font)
-                policy=catalog.fields[identity]['fit_policy']
-                if policy=='profile_tips' and tip and not (skip_japanese and japanese_text(record['text'],font.format)):
-                    packet=wrap_tip(proposal['text'],reflow=reflow,hyphenate=hyphenate,**tip)
-                    proposal.update(text=packet['text'],changed=packet['text']!=record['text'],
-                        note=f'Profile tips: native fixed cells; {tip["width"]}px, {tip["columns"]} units, at most three rows. Explicit separators exported to the game.')
-                if proposal['renderer']==UNKNOWN:
-                    plan['issues'].append(dict(script_id=None,command_id=identity,reason=proposal['note']))
-                elif policy=='font_only':
-                    ui_font_only+=1
-                    proposal['note']+=' Font normalization only; this UI field has no automatic fit geometry yet.'
-                if proposal['changed']:
-                    plan['ui_changes'].append(dict(field_id=identity,command_id=identity,before_text=record['text'],
-                        after_text=proposal['text'],renderer=proposal['renderer'],note=proposal['note']))
-            except (ValueError,KeyError,OSError) as error:
-                plan['issues'].append(dict(script_id=None,command_id=identity,reason=str(error)))
+    if include_ui and project.ui_text_assets:
+        from .uifitting import analyze_ui
+        plan['ui_changes'],ui_issues,plan['ui_checks']=analyze_ui(project,font,asset,reflow=reflow,hyphenate=hyphenate,skip_japanese=skip_japanese)
+        plan['issues'].extend(ui_issues)
+    else:plan['ui_checks']=[]
     plan['summary']=dict(scanned=plan['scanned'],eligible=plan['eligible'],changed_commands=len(plan['changes']),changed_ui_fields=len(plan['ui_changes']),
-                         inserted_commands=sum(c['page_count']-1 for c in plan['changes']),reported=len(plan['issues']),ui_font_only=ui_font_only)
+                         inserted_commands=sum(c['page_count']-1 for c in plan['changes']),reported=len(plan['issues']),ui_font_only=ui_font_only,checked_ui_fields=len(plan.get('ui_checks',[])))
     return plan
 
 
@@ -290,7 +257,8 @@ def public_plan(plan,start=0,limit=30):
     result=deepcopy({**{k:v for k,v in plan.items() if k!='font_asset'},'changes':[{k:v for k,v in c.items() if k!='pages'} for c in plan['changes'][start:start+limit]],
         'issues':plan['issues'][start:start+limit],
         'ui_changes':plan.get('ui_changes',[])[start:start+limit],
-        'next_start':start+limit if start+limit<max(len(plan['changes']),len(plan['issues']),len(plan.get('ui_changes',[]))) else None})
+        'ui_checks':plan.get('ui_checks',[])[start:start+limit],
+        'next_start':start+limit if start+limit<max(len(plan['changes']),len(plan['issues']),len(plan.get('ui_changes',[])),len(plan.get('ui_checks',[]))) else None})
     if plan.get('font_asset'):result['font_asset']={k:v for k,v in plan['font_asset']['manifest'].items() if k!='glyphs'}
     return result
 

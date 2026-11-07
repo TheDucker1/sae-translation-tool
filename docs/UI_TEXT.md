@@ -21,6 +21,13 @@ Text baked into an image remains in **Images…**; edit its PNG instead.
    review and atomic Apply/Undo. Profile-tip fitting also proposes a shared,
    bounded column-limit asset setting. When it changes, untouched original
    descriptions receive explicit separators to preserve their existing rows.
+   Font normalization precedes all fitting. Native multiline dialogs, profile
+   responses/results and replay descriptions wrap using their own geometry.
+   Single-line labels, formatted values and entire button-help rows get bounds
+   checks. Overflow is reported; unsupported breaks and automatic tiny fonts are
+   not inserted. Unchanged fields can appear as **UI checked** rows.
+   **Preview selected UI…** shows the currently checked proposals before Apply.
+   **Preview field…** in the UI browser can also show an uncommitted draft.
 5. In **Images… → UI compositions…**, preview supported screens with current
    UI strings and textures. The layout controls select the screen/state; they do
    not automatically reconstruct a running game. Use original textures compares
@@ -61,12 +68,20 @@ is rejected; your draft remains available until you reselect/Refresh.
   Enable **Reflow existing line breaks** to remove older narrow breaks. Default
   fitting preserves explicit breaks. Wider tips and the bounded setting are
   serialized into the exported game assets; preview reads those same bytes.
+  Auto-fit also checks fixed labels, combined help strips and formatted values;
+  native multiline prompts/responses/results are wrapped within their own bounds.
+  Response/result bounds follow the current source or replacement panel alpha,
+  with margins and the advance cursor excluded. Decorative frame bounds do not
+  determine the text capacity. Replay descriptions use their own caption panel.
   Preview glyphs use the player's PVF cache-cell sampling and half/full-width
   draw geometry; Qt outline antialiasing can still differ from the game.
-- Each field exposes `renderer`, `font_guidance` and searchable `fit_policy`.
-  `profile_tips` has fitting support; `font_only` means only font normalization
-  is implemented, not verified box fitting. `consumer_unverified` needs analysis.
-  The catalog reports counts and Auto-fit reports selected font-only UI fields.
+- Each field exposes `renderer`, `font_guidance`, source-bound `contracts` and
+  searchable `fit_policy`. `consumer_checked` has native geometry/format checks;
+  `profile_tips` has its separate count/row rule. `metadata` covers color codes,
+  input-glyph prefixes, catalogue names and platform save data, not a game-font
+  box. `requires_context` reports unbound native owners, legacy paths and composed
+  runtime messages. A field can still overflow for a particular translation.
+  A contract's `scene` supplies the actual preview family/state when available.
   `layout_setting` is a bounded numeric asset field, not a translated label.
   `measured_layout` supports
   proportional aliases. `fixed_cursor` uses ordinary Latin because its native
@@ -86,12 +101,12 @@ that every screen/state has been visually playtested.
 
 Platform trophy text is outside the USRDIR inventory. Its localized names and
 descriptions are stored in the separate `sce_sys/trophy` package, rendered by
-the platform/emulator rather than the game font. This tool does not yet edit or
-export that package. Modified-package acceptance on physical Vita is unverified.
+the platform/emulator rather than the game font. This package is outside this
+tool's scope and is not edited or exported.
 
 ## Agent workflow
 
-Restart the existing MCP server/client for version1.7. No new dependencies or
+Restart the existing MCP server/client for version1.8. No new dependencies or
 engine build are required. Standalone and GUI-hosted modes use the same fields:
 
 1. `list_ui_text(query,category,source,include_protected,start,limit)` discovers
@@ -99,6 +114,10 @@ engine build are required. Standalone and GUI-hosted modes use the same fields:
    query is substring search, so a short ID can also match longer neighboring IDs.
 2. `get_ui_text(field_id)` supplies current revision, encoding, tokens, source
    hashes and neighboring strings. Read this before editing unfamiliar fields.
+   `get_ui_text_preview(field_id, plan_id?)` renders its bound screen using current
+   data or an unapplied Auto-fit plan. It returns native PNG image content and
+   layer geometry without changing the project. Its scene ID can be paged with
+   `get_ui_scene_layers`. Missing native context is an explicit error.
 3. `apply_ui_text(expected_revision,edits)` takes up to100 objects with
    `field_id`, exact `expected_text`, and `translation`. A failed member rejects
    the whole batch. Missing/changed source, stale revisions and protected fields

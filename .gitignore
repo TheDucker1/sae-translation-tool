@@ -50,6 +50,7 @@ Thumbs.db
 !/tests/test_autofit_layouts.py
 !/tests/test_fontstyle.py
 !/tests/test_autofit_ui.py
+!/tests/test_ui_fitting.py
 
 # Original/extracted game assets, native evidence and generated translations.
 GAMEFILE/

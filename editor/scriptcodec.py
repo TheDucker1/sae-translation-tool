@@ -23,7 +23,9 @@ class Reader:
     def string(self):
         start=self.pos;value=self.take(self.word()*2).decode('utf-16-le',errors='strict')
         observer=STRING_OBSERVER.get()
-        if observer:observer(self,start,self.pos,value)
+        if observer:
+            observed=observer(self,start,self.pos,value)
+            if observed is not None:value=observed
         return value
     def count(self):
         n=self.word()

@@ -161,6 +161,20 @@ Auto-fit. Existing line breaks need explicit reflow to change; row geometry stay
 authored. Pair kerning and complex shaping are outside this asset path.
 Review `ui_changes` with script/font proposals and Apply once; Undo restores all
 three. `include_ui=false` explicitly limits the batch to script/font work.
+UI cleanup now normalizes the selected font first, then checks each consumer's
+geometry. Labels and combined button-help strips get single-line fit checks;
+native multiline prompts, responses and result templates get word wrapping.
+Result templates are checked with every authored character/category substitution.
+Profile responses/results use the current panel texture's visible area and reserve
+the advance cursor. Replay captions use their own two-row panel; profile tips
+retain their separate three-row/count setting. These rules are not interchangeable.
+In Auto-fit, select a UI row and use **Preview selected UI…** to render checked
+proposals before Apply. In **UI text…**, **Preview field…** also renders an unsaved
+draft. Both use the same effective font/assets as export without applying changes.
+MCP provides `get_ui_text_preview(field_id,plan_id)` for the same review.
+Overflow requires shortening when a consumer cannot wrap. `requires_context`
+identifies unresolved legacy/runtime layouts; it is not reported as a successful
+fit. Source-bound previews are static compositions, not emulator captures.
 UI text… retains Match font in draft for individual edits. MCP exposes
 renderer/font_guidance and format_ui_text. Verified dialog
 and profile response layouts keep proportional aliases. Fixed-cursor UI remains
