@@ -46,8 +46,9 @@ translator intended or introduce pair-specific kerning.
   shorter globally, which can affect spacing/centering elsewhere.
 - This uses per-glyph optical spacing, not kerning pairs or complex shaping.
   Non-ASCII Latin extensions are not generally supported by the script encoding.
-- Existing authored breaks stay hard. Timed, queued and retained-buffer Auto-fit
-  restrictions remain; unsupported timed explicit breaks are rejected.
+- Existing authored breaks stay hard unless Reflow existing line breaks is enabled.
+  Timed text can use verified space padding with intact directive times. Queued
+  and append messages must fit one message; inherited buffers need display context.
 - Inspect appearance, clipping and positioning in the target game. The editor's
   placeholder preview does not certify native pixel or animation parity.
 

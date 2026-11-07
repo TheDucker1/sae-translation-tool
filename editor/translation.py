@@ -21,7 +21,7 @@ from .runtime import Session
 from .gameexport import export_game
 from .mcp_models import TranslationEdit,CommandEdit,PreviewInput,BankEdit,Id,Index,Limit,PixelRect
 from .dialogueview import project_flow,transcript,readable
-from .textlayout import TextLayoutService,native_field
+from .textlayout import TextLayoutService,native_field,supports_breaks
 from .fontpatch import effective_font
 from .mcp_models import UiTextEdit
 
@@ -447,12 +447,12 @@ class TranslationWorkspace:
     def format_text(self,script_id:Index,command_id:Id,field:Id,
                     text:Annotated[str,Field(max_length=131070)]|None=None,
                     width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
-                    dialogue_mode:Literal['ordinary','battle']='ordinary',full_width_latin:bool=False)->dict[str,Any]:
-        """Propose game-compatible word wrapping without editing. full_width_latin converts supported visible ASCII/ruby, preserving controls/spaces. Timed SP QUE gets conversion only with wrapping_skipped, measured overflow and unchanged timing; explicit breaks reject. Single-line labels check screen positions. Choose dialogue mode explicitly."""
+                    dialogue_mode:Literal['auto','ordinary','battle']='auto',full_width_latin:bool=False,reflow:bool=False)->dict[str,Any]:
+        """Propose wrapping using automatic command/file layout. full_width_latin converts visible ASCII/ruby around intact tags. Timed SP QUE uses verified space padding, preserving directive times; unfit text reports fit_warning with conversion only. Bubble regions follow current fill textures. reflow replaces old breaks before fitting. Existing timed explicit breaks reject unless repaired by reflow. Omit dialogue_mode for automatic selection."""
         _,command=self.command(script_id,command_id);allowed=fields(command)
         if field not in allowed:raise ValueError('Field is not editable translation text')
         font=effective_font(self.project,self._runtime.text);profile=bool(self.project.font_asset)
-        result=TextLayoutService(font,self._runtime.settings).wrap(command.opcode,allowed[field] if text is None else text,field=field,width=width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin or profile and command.opcode in {0x64,0x3f2,0x3f8},preserve_speaker=profile)
+        result=TextLayoutService(font,self._runtime.settings,project=self.project,script_id=script_id,command=command).wrap(command.opcode,allowed[field] if text is None else text,field=field,width=width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin or profile and command.opcode in {0x64,0x3f2,0x3f8},preserve_speaker=profile,reflow=reflow)
         return dict(revision=self.project.revision,script_id=script_id,command_id=command_id,field=field,**result)
 
     @locked
@@ -461,12 +461,12 @@ class TranslationWorkspace:
             max_lines:Annotated[int,Field(ge=1,le=20,strict=True)]|None=None,
             width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
             label_width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
-            dialogue_mode:Literal['auto','ordinary','battle']='auto',limit:Limit=30,full_width_latin:bool=False,proportional_latin:bool=False)->dict[str,Any]:
-        """Analyze cleanup/page proposals. proportional_latin generates an asset-only Font.gsf with variable dialogue widths, retained by Apply/save/Undo/export; names/simple UI remain fixed. full_width_latin converts visible text/ruby around intact controls. Timed/queued/append text gets conversion only, no reflow or timing changes; review measured overflow/context issues. Omit script_id for whole project; review font_asset and text before Apply."""
+            dialogue_mode:Literal['auto','ordinary','battle']='auto',limit:Limit=30,full_width_latin:bool=False,proportional_latin:bool=False,reflow:bool=False)->dict[str,Any]:
+        """Analyze all seven text families with automatic per-command/file layouts and texture-derived battle bubble bounds. proportional_latin generates a project/export Font.gsf. Timed messages use verified space padding with intact directive times. Only ordinary synchronous messages paginate. Inherited/retained contexts remain conversion only. reflow repairs old breaks. Omit script_id for whole project and dialogue_mode for automatic selection. Review issues and proposals before Apply."""
         from .textcleanup import analyze_cleanup,public_plan
         plan=analyze_cleanup(self.project,self._runtime.text,self._runtime.settings,
             script_ids=None if script_id is None else [script_id],command_ids=command_ids,skip_japanese=skip_japanese,
-            hyphenate=hyphenate,paginate=paginate,max_lines=max_lines,width=width,label_width=label_width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin,proportional_latin=proportional_latin)
+            hyphenate=hyphenate,paginate=paginate,max_lines=max_lines,width=width,label_width=label_width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin,proportional_latin=proportional_latin,reflow=reflow)
         plans=getattr(self,'_cleanup_plans',{});plans[plan['plan_id']]=plan
         while len(plans)>4:plans.pop(next(iter(plans)))
         self._cleanup_plans=plans;return public_plan(plan,limit=limit)
@@ -502,8 +502,8 @@ class TranslationWorkspace:
             if old!=edit.expected_text:raise ValueError('Stale expected_text; read current context and retry')
             translated=native_field(c.opcode,edit.translation,self.project.text_format);layout=None
             profile=bool(self.project.font_asset) and c.opcode in {0x64,0x3f2,0x3f8}
-            if edit.wrap_words or edit.full_width_latin or profile:
-                layout=TextLayoutService(effective_font(self.project,self._runtime.text),self._runtime.settings).wrap(c.opcode,translated,field=edit.field,width=edit.layout_width,dialogue_mode=edit.dialogue_mode,full_width_latin=edit.full_width_latin or profile,preserve_speaker=profile);translated=layout['text']
+            if edit.wrap_words or edit.full_width_latin or edit.reflow or profile:
+                layout=TextLayoutService(effective_font(self.project,self._runtime.text),self._runtime.settings,project=self.project,script_id=edit.script_id,command=c).wrap(c.opcode,translated,field=edit.field,width=edit.layout_width,dialogue_mode=edit.dialogue_mode,full_width_latin=edit.full_width_latin or profile and supports_breaks(c.opcode),preserve_speaker=profile,reflow=edit.reflow);translated=layout['text']
             elif edit.layout_width is not None:raise ValueError('layout_width requires wrap_words=true or full_width_latin=true')
             if self.controls(old)!=self.controls(translated):raise ValueError('Text-only translation must preserve native control tokens and order')
             if old.partition('\0')[1:]!=translated.partition('\0')[1:]:raise ValueError('Do not introduce or alter NUL-terminated hidden text')

@@ -85,7 +85,7 @@ class WidthControlChecks(unittest.TestCase):
             command=project.scripts[0].commands[3];args=deepcopy(command.args)
             args['text']='A「Before《SP QUE,1,2700》After」'
             project.replace(0,command.uid,0x64,args)
-            plan=analyze_cleanup(project,self.font,{},command_ids=[command.uid],full_width_latin=True)
+            plan=analyze_cleanup(project,self.font,{},command_ids=[command.uid],full_width_latin=True,hyphenate=False)
             apply_cleanup(project,plan);exported=prepare_archives(project)
             obj=nested(nested(nested(Archive(exported['resource']),4),0),0)
             actual=describe(obj.read(0,gzip=True))['commands'][3]['args']['text']
@@ -93,10 +93,10 @@ class WidthControlChecks(unittest.TestCase):
             self.assertEqual((Path(project.root)/'first.dat').read_bytes(),first)
             self.assertEqual((Path(project.root)/'resource.dat').read_bytes(),resource)
 
-    def test_opt_out_stays_read_only_and_invalid_timed_breaks_reject(self):
+    def test_fitting_text_stays_intact_and_invalid_timed_breaks_reject(self):
         source='A「Before《SP QUE,1,2700》After」';project=self.project(source)
         plan=analyze_cleanup(project,self.font,{},command_ids=['s0:c2'])
-        self.assertFalse(plan['changes']);self.assertFalse(plan['issues'][0]['measurement']['auto_edit'])
+        self.assertFalse(plan['changes']);self.assertFalse(plan['issues'])
         invalid=source.replace('Before','Before＿')
         project.scripts[0].commands[2].args['text']=invalid
         plan=analyze_cleanup(project,self.font,{},command_ids=['s0:c2'],full_width_latin=True)

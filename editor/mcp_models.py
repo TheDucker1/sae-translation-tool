@@ -20,7 +20,8 @@ class TranslationEdit(StrictModel):
     wrap_words:bool=False
     full_width_latin:bool=False
     layout_width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None
-    dialogue_mode:Literal['ordinary','battle']='ordinary'
+    dialogue_mode:Literal['auto','ordinary','battle']='auto'
+    reflow:bool=False
 
 
 class UiTextEdit(StrictModel):

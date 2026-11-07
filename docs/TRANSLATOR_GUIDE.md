@@ -70,11 +70,20 @@ Multiline fields(0064 dialogue,03F2 battle labels,03F8 result text) accept LF/CR
 in translation input: tools convert those to native `＿` breaks on commit. Use
 format_text to propose measured word wrapping without editing; it returns native
 text, readable lines and widths. Or set wrap_words=true in an apply_translations
-edit; optional layout_width is in game pixels. dialogue_mode='ordinary' is the
-default; choose 'battle' for battle dialogue. Existing hard breaks/controls/ruby
-are preserved. Timed SP QUE dialogue with explicit breaks is rejected at input,
-preview and export. Auto-fit can convert its visible text to full width without
-inserting breaks or pages; otherwise it only measures the text.
+edit; optional layout_width is in game pixels. Layout is automatic per command
+and script, including message windows, battle dialogue/choices, approach results
+and fixed-position labels. Omit dialogue_mode in MCP calls. Battle ownership
+follows native file loading and resets at file changes. GUI fitting has no global
+message/battle mode selector. Existing hard breaks/controls/ruby are preserved.
+Enable Reflow existing line breaks (MCP reflow=true) to repair earlier wrong-width
+wrapping. This treats old breaks as word separators before fitting again.
+Timed SP QUE dialogue uses spaces to trigger the native automatic wrap where
+explicit breaks are forbidden. The formatter validates the resulting word/line
+positions with the native layout algorithm and preserves tag text and times.
+Added spaces change character indices and may affect reveal pacing between cues.
+The result reports break_strategy='spaces'. Unfit text returns fit_warning and
+conversion-only output for review. Existing timed explicit breaks still reject
+unless repaired using reflow.
 Timed repagination requires voice-clock rescheduling and is still reported.
 Other choice/topic/title/introduction labels are native single-line draws:
 format_text derives screen fit from authored anchors/panels; width overrides are
@@ -108,13 +117,11 @@ CP932 full-width forms before measuring. Directive bytes and operands, spaces,
 native brackets/breaks and hidden suffixes remain intact. Unsupported full-width
 punctuation and underscore stay unchanged (full-width underscore is a newline).
 Full-width words remain word-based; more pages/advance steps may be necessary.
-Review proposal warnings and single-line overflow. Timed/queued/retained-buffer
-Auto-fit offers conversion-only proposals, including text before/after commands
-and ruby readings. Tags such as 《SP QUE,1,2700》 stay byte-for-byte unchanged.
-This one-for-one conversion preserves glyph indices and timing. It adds no breaks,
-hyphens or pages. The report measures the converted text and flags overflow or
-missing combined-buffer context for manual review. format_text also returns
-wrapping_skipped for timed conversion. Without conversion, these rows stay read-only.
+Review proposal warnings and single-line overflow. Visible text before/after
+controls and ruby readings participate in conversion and fitting. Tags such as
+《SP QUE,1,2700》 stay byte-for-byte unchanged. Inherited/retained-buffer text only
+receives one-for-one conversion while its combined display context is unresolved.
+Timed, queued and append dialogue are never paginated by cloning their commands.
 Preview samples the original font's full PVF cache cells, including for half-width
 Latin, with the player's cell metrics/baseline and separate source/destination
 rectangles. GSF bitmap overrides retain their authored geometry. Qt still supplies
@@ -135,11 +142,16 @@ Font generator revision2 tightens apostrophe masks/advances. Reanalyze with
 proportional_latin=true to propose an upgrade to older embedded fonts; inspect
 font_changed. Apply can update Font.gsf alone even with zero text changes. The
 same Undo/save/preview/export rules apply; literal text spaces are not removed.
-Queued-route text gets a read-only measured Fits/Overflow report. Selector/append
-and possible retained-buffer successors report isolated geometry with Context
-needed; combined display requires preceding route/buffer state. Such commands are
-only eligible for one-for-one width conversion. Auto layout follows the native load-time battle flag;
-approach setup does not override it merely by appearing in the same file.
+Queued-route and append text can fit within one message, with overflow reported.
+Selector and possible retained-buffer successors report isolated geometry with
+Context needed; combined display requires preceding route/buffer state. These
+receive conversion only. Battle dialogue and choices use a rectangle inscribed
+in all three current bubble fill textures, including crop, scale, anchors, line
+offsets, pulse minimum and ruby height. It is conservative about curved edges.
+The report includes the selected layout, width, safe capacity and region metadata.
+Fixed-position labels use their own cursor advances even with a proportional
+dialogue font. A rejected field is reported individually; other fitting fields
+in the command remain eligible. Single-line labels that are too long need shortening.
 For older projects with timed breaks, undo timed wrapping or replace breaks with spaces
 while keeping its SP QUE directive; character-based wrapping may split words.
 The corrected editor will not create that unsupported combination. This workflow operates
