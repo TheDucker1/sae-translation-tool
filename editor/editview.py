@@ -1,5 +1,6 @@
 """Typed text-command forms. Reference pickers store stable IDs, not numbers."""
 from copy import deepcopy
+from types import SimpleNamespace
 import json,re
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QGroupBox,
@@ -58,9 +59,11 @@ class FormValue(QWidget):
                     note=QLabel('Enter = game line break' if multiline else 'Single line; authored screen position determines fit');note.setWordWrap(True);row.addWidget(note,1);layout.addLayout(row)
                     def format_text():
                         try:
-                            result=owner.text_layout.wrap(owner.opcode,self.input.toPlainText(),field='.'.join(str(p) if not isinstance(p,int) else f'[{p}]' for p in self.path).replace('.[','['),width=owner.wrap_width.value() or None,dialogue_mode=owner.dialogue_mode.currentData(),full_width_latin=owner.full_width.isChecked() or owner.proportional_font and supports_breaks(owner.opcode),preserve_speaker=owner.proportional_font)
+                            owner.text_layout.command=SimpleNamespace(args=owner.form.read())
+                            result=owner.text_layout.wrap(owner.opcode,self.input.toPlainText(),field='.'.join(str(p) if not isinstance(p,int) else f'[{p}]' for p in self.path).replace('.[','['),width=owner.wrap_width.value() or None,full_width_latin=owner.full_width.isChecked() or owner.proportional_font and supports_breaks(owner.opcode),preserve_speaker=owner.proportional_font)
                             self.input.selectAll();self.input.insertPlainText(result['editor_text'])
-                            note.setText(f"{result['line_count']} line(s), widest {max(result['line_widths'],default=0)}/{result['width']}px");owner.error.clear()
+                            note.setText(f"{result['line_count']} line(s), widest {max(result['line_widths'],default=0)}/{result['width']}px"
+                                         +(' · Space padding' if result.get('break_strategy')=='spaces' else ' · Conversion only' if result.get('wrapping_skipped') else ''));owner.error.clear()
                         except ValueError as error:owner.error.setText(str(error))
                     wrap.clicked.connect(format_text)
         elif isinstance(value,(int,bool)):
@@ -92,8 +95,8 @@ class TextCommandDialog(QDialog):
     def __init__(self,project,sid,index,mode='edit',parent=None):
         super().__init__(parent);self.script=project.scripts[sid];self.mode=mode;self.resize(820,780);self.formatter=project.text_format
         self.proportional_font=bool(project.font_asset)
-        session=getattr(parent,'session',None);self.text_layout=TextLayoutService(effective_font(project,session.text),session.settings) if session and session.text else None
         self.command=self.script.commands[index] if index<len(self.script.commands) else None
+        session=getattr(parent,'session',None);self.text_layout=TextLayoutService(effective_font(project,session.text),session.settings,project=project,script_id=sid,command=self.command) if session and session.text else None
         following=index if mode=='add_before' else index+1
         self.default_target=self.script.commands[min(following,len(self.script.commands)-1)].uid if self.script.commands else f'self:{sid}'
         self.setWindowTitle(mode.title()+' text opcode — project only')
@@ -102,11 +105,11 @@ class TextCommandDialog(QDialog):
         code=self.command.opcode if self.command and self.command.opcode in TEXT_OPS else 0x64
         self.kinds.setCurrentIndex(self.kinds.findData(code));self.kinds.setEnabled(mode!='edit');layout.addWidget(self.kinds)
         self.note=QLabel('Multiline text: Enter becomes a game break; Wrap words uses game metrics and keeps existing breaks. Single-line labels: Check fit. Targets bind to stable IDs.');self.note.setWordWrap(True);layout.addWidget(self.note)
-        row=QHBoxLayout();self.dialogue_mode=QComboBox();self.dialogue_mode.addItem('Message window','ordinary');self.dialogue_mode.addItem('Battle dialogue','battle');row.addWidget(self.dialogue_mode)
+        row=QHBoxLayout();row.addWidget(QLabel('Layout detected from command and script'))
         row.addWidget(QLabel('Wrap width (game px):'));self.wrap_width=QSpinBox();self.wrap_width.setRange(0,4096);self.wrap_width.setSpecialValueText('Authored width');row.addWidget(self.wrap_width);layout.addLayout(row)
         self.full_width=QCheckBox('Full-width Latin when using Wrap words / Check fit');layout.addWidget(self.full_width)
         if self.proportional_font:
-            info=QLabel('Proportional font selected: Apply fits multiline text using its bitmap aliases; speaker text is preserved.');info.setWordWrap(True);layout.addWidget(info)
+            info=QLabel('Proportional font selected: Apply uses measured aliases for dialogue and ordinary Latin for fixed-cursor labels. Speaker text is preserved.');info.setWordWrap(True);layout.addWidget(info)
         self.scroll=QScrollArea();self.scroll.setWidgetResizable(True);layout.addWidget(self.scroll,1)
         self.error=QLabel();self.error.setWordWrap(True);self.error.setStyleSheet('color:#f6b19e');layout.addWidget(self.error)
         buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);buttons.accepted.connect(self.apply);buttons.rejected.connect(self.reject);layout.addWidget(buttons)
@@ -121,7 +124,6 @@ class TextCommandDialog(QDialog):
         return f'{spec.type}: {spec.meaning}' if spec else 'See Opcode reference for conditional layout and protected fields.'
 
     def rebuild(self,*_):
-        self.dialogue_mode.setEnabled(self.opcode==0x64)
         if self.mode in {'edit','replace'} and self.command and self.opcode==self.command.opcode:value=deepcopy(self.command.args)
         else:value=template(self.opcode,self.default_target)
         self.form=FormValue(value,(),self);self.scroll.setWidget(self.form)
@@ -129,9 +131,10 @@ class TextCommandDialog(QDialog):
     def apply(self):
         try:
             values=self.form.read()
-            if self.proportional_font and supports_breaks(self.opcode) and self.text_layout:
+            if self.text_layout:self.text_layout.command=SimpleNamespace(args=values)
+            if self.proportional_font and self.text_layout:
                 for key,value in text_fields(dict(opcode=self.opcode,args=values)):
-                    packet=self.text_layout.wrap(self.opcode,value,field=key,width=self.wrap_width.value() or None,dialogue_mode=self.dialogue_mode.currentData(),full_width_latin=True,preserve_speaker=True)
+                    packet=self.text_layout.wrap(self.opcode,value,field=key,width=self.wrap_width.value() or None,full_width_latin=True,preserve_speaker=True)
                     codec.put(values,field_path(key),packet['text'])
             self.args=normalize_arguments(self.opcode,values,self.formatter)
             # Check encoder shape/ranges without treating reference IDs as ints.

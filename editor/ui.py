@@ -171,10 +171,10 @@ class Preview(QWidget):
             else:
                 raw = bytes.fromhex(data['rgba'])
                 img = QImage(raw, data['width'], data['height'], data['width'] * 4, QImage.Format_RGBA8888).copy()
-                self.glyph_cache[code] = (img, data['bitmap'])
+                self.glyph_cache[code] = (img, data['bitmap'],data.get('source',[0,0,data['width'],data['height']]))
         cached = self.glyph_cache[code]
         if cached is None: return None
-        img, bitmap = cached
+        img, bitmap, source = cached
         if bitmap:
             # Cached symbol atlases retain RGB; generated glyphs supply alpha.
             tinted = img.convertToFormat(QImage.Format_RGBA8888)
@@ -224,7 +224,7 @@ class Preview(QWidget):
             try: image=self.image(g['code'],g['color'][:3])
             except RuntimeError: image=None
             if image is not None:
-                p.setOpacity(g['color'][3]/255); p.drawImage(QRectF(*g['rect']),image)
+                p.setOpacity(g['color'][3]/255); p.drawImage(QRectF(*g['rect']),image,QRectF(*self.glyph_cache[g['code']][2]))
         p.setOpacity(1); p.end()
 
 
@@ -236,7 +236,7 @@ class Window(QMainWindow):
         self.routes=RouteBook();self.script_cache={};self.seek_origin=None;self.target_phase='before';self.seek_steps=0;self.state_origin='Fresh file entry';self.file_signature=None
         self.project=None;self.project_path=None;self.preview_revision=None;self.diagnostics=[]
         self.project_disk_hash=None;self.interaction_revision=uuid.uuid4().hex
-        self.mcp_panel=None;self.mcp_workspace=None;self.export_worker=None;self.export_remote=False
+        self.mcp_panel=None;self.mcp_workspace=None;self.export_worker=None;self.export_remote=False;self.image_panel=None;self.ui_text_panel=None
         self.model=Commands(); self.proxy=CommandFilter(self); self.proxy.setSourceModel(self.model); self.proxy.setDynamicSortFilter(False); self.proxy.setFilterKeyColumn(-1); self.proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
         central=QWidget(); self.setCentralWidget(central); outer=QVBoxLayout(central); outer.setContentsMargins(16,14,16,10)
         top=QHBoxLayout(); title=QLabel('SCRIPT STUDIO'); title.setStyleSheet('font-size:21px;font-weight:700;letter-spacing:2px'); top.addWidget(title)
@@ -245,6 +245,8 @@ class Window(QMainWindow):
         self.open_button=QPushButton('Load game'); self.open_button.setObjectName('primary'); self.open_button.clicked.connect(self.load_game); top.addWidget(self.open_button); outer.addLayout(top)
         self.mcp_button=QPushButton('MCP…');self.mcp_button.clicked.connect(self.show_mcp_panel);top.addWidget(self.mcp_button)
         self.fit_button=QPushButton('Auto-fit text…');self.fit_button.clicked.connect(self.auto_fit_text);top.addWidget(self.fit_button)
+        self.images_button=QPushButton('Images…');self.images_button.clicked.connect(self.show_images);top.addWidget(self.images_button)
+        self.ui_text_button=QPushButton('UI text…');self.ui_text_button.clicked.connect(self.show_ui_text);top.addWidget(self.ui_text_button)
         bar=QHBoxLayout(); self.selector=QComboBox(); self.selector.setMinimumWidth(280); self.selector.currentIndexChanged.connect(self.select_script); bar.addWidget(self.selector)
         for label,action in [('Restart',self.restart),('Rewind',self.rewind),('▶ Play',self.play),('Step',self.step_command),('Preview here',self.jump_selected),('Run forward',self.run_to_selected)]:
             b=QPushButton(label); b.clicked.connect(action); bar.addWidget(b)
@@ -321,6 +323,9 @@ class Window(QMainWindow):
         if self.mcp_panel and not self.mcp_panel.shutdown():self.statusBar().showMessage('MCP is stopping; retry loading after it finishes.');return
         self.pause(); path=str(Path(self.folder.text()).expanduser().resolve()); self.preview.clear()
         if not Path(path,'resource.dat').is_file(): self.problem('Select the USRDIR folder containing resource.dat.'); return
+        if self.image_panel:self.image_panel.invalidate()
+        if getattr(self,'_ui_fit_preview',None):self._ui_fit_preview.invalidate()
+        self._ui_fit_image_catalog=None
         self.state_line.setText('Loading original scripts and text settings…'); self.centralWidget().setEnabled(False); self.view={}
         self.worker=Loader(self.session,path); self.worker.ready.connect(self.loaded); self.worker.failed.connect(self.load_failed); self.worker.start()
 
@@ -429,7 +434,7 @@ class Window(QMainWindow):
                 self.project.preview_issues=result['issues'];issues=self.project.validate() if result['issues'] else []
             except Exception as e:issues=[Diagnostic(self.script_id,None,'Python revision rejected: '+str(e))]
             finally:QApplication.restoreOverrideCursor()
-        warnings=[]
+        warnings=[Diagnostic(-1,None,'Game export blocked: '+v['message'],'warning',('ui_text_assets',v['field_id'])) for v in self.project.ui_metadata_issues()]
         if result:
             for item in result.get('warnings',[]):
                 script=self.project.scripts[item['script']];i=item.get('command',-1)
@@ -457,6 +462,17 @@ class Window(QMainWindow):
         if rows:self.select_command(index)
         if self.workspace_tabs.currentIndex()==2:self.rebuild_file_flow()
         self.setWindowTitle('Saekano Script Studio — edited project'+(' *' if self.project.saved_revision!=self.project.revision else ''))
+        if self.image_panel:self.image_panel.set_project(self.project)
+        if self.ui_text_panel:self.ui_text_panel.set_project(self.project)
+        if getattr(self,'_ui_fit_preview',None):self._ui_fit_preview.invalidate()
+
+    def textures_edited(self,previous_revision):
+        if self.preview_revision==previous_revision:self.preview_revision=self.project.revision
+        if self.image_panel:self.image_panel.set_project(self.project)
+        if self.ui_text_panel:self.ui_text_panel.set_project(self.project)
+        if getattr(self,'_ui_fit_preview',None):self._ui_fit_preview.invalidate()
+        self.setWindowTitle('Saekano Script Studio — texture project'+(' *' if self.project.saved_revision!=self.project.revision else ''))
+        self.statusBar().showMessage('Project texture updated; save the project to keep it. Game files and scenario state unchanged.')
 
     def drop_text_template(self,row,opcode,after):
         if row>=0:
@@ -498,7 +514,10 @@ class Window(QMainWindow):
         except Exception as e:self.problem(str(e))
 
     def undo_edit(self,*_):
-        if self.project and self.project.undo_stack:self.project.undo();self.edited(self.script_id)
+        if self.project and self.project.undo_stack:
+            key,revision=self.project.scenario_key(),self.project.revision;self.project.undo()
+            if key==self.project.scenario_key():self.textures_edited(revision)
+            else:self.edited(self.script_id)
 
     def auto_fit_text(self):
         self.pause()
@@ -509,14 +528,17 @@ class Window(QMainWindow):
         if not dialog.exec() or not dialog.plan:return
         try:
             self.guard_edit_snapshot(project,revision);result=apply_cleanup(project,dialog.plan,dialog.selected_commands())
-            if result['changes'] or result.get('font_changed'):
+            if result['changes'] or result.get('ui_fields') or result.get('font_changed'):
                 first=result['changes'][0] if result['changes'] else dict(script_id=self.script_id,command_id=None)
                 self.edited(first['script_id'],first['command_id'],known_valid=True)
-                self.statusBar().showMessage(f"Auto-fit applied to {len(result['changes'])} command(s); inserted {result['inserted_commands']}. "+('Font asset updated. ' if result.get('font_changed') else '')+'Undo restores the batch.')
+                self.statusBar().showMessage(f"Auto-fit applied to {len(result['changes'])} command(s) and {len(result.get('ui_fields',[]))} UI fields; inserted {result['inserted_commands']}. "+('Font asset updated. ' if result.get('font_changed') else '')+'Undo restores the batch.')
         except (ValueError,RuntimeError) as error:self.problem(str(error))
 
     def redo_edit(self,*_):
-        if self.project and self.project.redo_stack:self.project.redo();self.edited(self.script_id)
+        if self.project and self.project.redo_stack:
+            key,revision=self.project.scenario_key(),self.project.revision;self.project.redo()
+            if key==self.project.scenario_key():self.textures_edited(revision)
+            else:self.edited(self.script_id)
 
     def navigate_diagnostic(self,item):
         diagnostic=item.data(Qt.UserRole)
@@ -595,13 +617,14 @@ class Window(QMainWindow):
             state='cancelled' if worker.cancelled else 'failed' if worker.error else 'complete'
             if self.mcp_workspace and self.mcp_workspace.export_status:
                 self.mcp_workspace.export_status.update(state=state,error=worker.error)
+                if worker.result:self.mcp_workspace.export_status['result']={key:worker.result[key] for key in ('path','changed_scripts','changed_textures','changed_ui_text','requires_fresh_progress','output_hashes')}
             self.statusBar().showMessage('Agent export '+state+(': '+worker.error if worker.error else ''))
             if self.mcp_panel:self.mcp_panel.log.appendPlainText('Export '+state)
             worker.deleteLater();return
         if worker.cancelled:self.statusBar().showMessage('Export cancelled. Original data and existing output unchanged.')
         elif worker.error:self.problem('Export failed: '+worker.error)
         else:
-            result=worker.result;message=f"Separate patched USRDIR exported to:\n{result['path']}\n\n{len(result['changed_scripts'])} modified script(s). Original files remain unchanged."
+            result=worker.result;message=f"Separate patched USRDIR exported to:\n{result['path']}\n\n{len(result['changed_scripts'])} modified script(s), {result['changed_textures']} texture(s), {result['changed_ui_text']} UI text field(s). Original files remain unchanged."
             if result['requires_fresh_progress']:message+='\n\nUse fresh saves/history; existing progress was not migrated.'
             self.statusBar().showMessage('Game export complete: '+result['path']);QMessageBox.information(self,'Export complete',message)
         worker.deleteLater()
@@ -844,6 +867,10 @@ class Window(QMainWindow):
             self.export_worker.requestInterruption();self.statusBar().showMessage('Cancelling export; close again after staging cleanup completes.');event.ignore();return
         if not self.confirm_project_discard():event.ignore();return
         if self.mcp_panel and not self.mcp_panel.shutdown():event.ignore();return
+        if self.image_panel and not self.image_panel.shutdown():
+            self.statusBar().showMessage('Cancelling image operation; close again after it finishes.');event.ignore();return
+        if getattr(self,'_ui_fit_preview',None) and not self._ui_fit_preview.shutdown():
+            self.statusBar().showMessage('Cancelling UI preview; close again after it finishes.');event.ignore();return
         if hasattr(self,'worker') and self.worker.isRunning():self.worker.wait()
         super().closeEvent(event)
 
@@ -851,6 +878,8 @@ class Window(QMainWindow):
     def file_hash(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
     def guard_edit_snapshot(self,project,revision):
+        if self.export_worker is not None or not self.centralWidget().isEnabled():
+            raise ValueError('GUI is loading/exporting; retry editing after it finishes')
         if self.project is not project or self.project.revision!=revision:
             raise ValueError('GUI edit is stale because the project changed. Nothing applied; reopen the editor for the current command.')
 
@@ -861,6 +890,71 @@ class Window(QMainWindow):
                 self.mcp_panel=McpPanel(self)
             except ImportError as error:self.problem('Install the optional MCP dependencies with setup-mcp.ps1: '+str(error));return
         self.mcp_panel.show();self.mcp_panel.raise_();self.mcp_panel.activateWindow()
+
+    def show_ui_text(self):
+        if not self.ensure_project():return
+        self.pause()
+        try:
+            if self.ui_text_panel is None:
+                from .uitextview import UiTextBrowser
+                self.ui_text_panel=UiTextBrowser(self)
+                self.ui_text_panel.textChanged.connect(lambda previous:self.edited(self.script_id))
+            self.ui_text_panel.set_project(self.project,force=True);self.ui_text_panel.show();self.ui_text_panel.raise_()
+        except (ValueError,OSError) as error:self.problem(str(error))
+
+    def show_images(self):
+        if not self.session.original:self.problem('Load a game folder first.');return
+        self.pause()
+        if self.image_panel is None:
+            from .imageview import ImageBrowser
+            self.image_panel=ImageBrowser(self)
+            self.image_panel.commandPicked.connect(self.inspect_image_use)
+            self.image_panel.texturesChanged.connect(self.textures_edited)
+        selected=self.table.currentIndex()
+        command=self.commands[self.proxy.mapToSource(selected).row()] if selected.isValid() and self.commands else None
+        sample=command if command and command['opcode']==0x64 else next((c for c in self.commands if c['opcode']==0x64),None)
+        examples={}
+        choice=command if command and command['opcode']==0x65 else next((c for c in self.commands if c['opcode']==0x65),None)
+        if choice:examples['choices']='\n'.join(row['label'] for row in choice['args']['choices'])
+        approach=command if command and command['opcode']==0x3f6 else next((c for c in self.commands if c['opcode']==0x3f6),None)
+        if approach:examples['profile:topics']='\n'.join(' | '.join([row['label']]+[child['label'] for child in row['children']]) for row in approach['args']['parents'])
+        result=command if command and command['opcode']==0x3f8 else next((c for c in self.commands if c['opcode']==0x3f8),None)
+        if result:examples['profile:result_text']=result['args']['outcomes'][0]['text']
+        versus=command if command and command['opcode']==0x3f9 else next((c for c in self.commands if c['opcode']==0x3f9),None)
+        if versus:
+            for side,value in enumerate(versus['args']['texts']):examples['battle:caption_'+str(side)]=value
+        battle_choice=command if command and command['opcode']==0x3f2 else next((c for c in self.commands if c['opcode']==0x3f2),None)
+        if battle_choice:
+            from .progression import track_number
+            examples['battle:choices']='\n'.join(row['label'] for row in battle_choice['args']['choices'][1:])
+            for i,row in enumerate(battle_choice['args']['choices'][1:]):
+                kind=track_number(row['extras'][0]) if row['extras'] else 0
+                examples['battle:type_'+str(i)]=kind if 0<=kind<=2 else 3
+        entry=next((c for c in self.commands if c['opcode']==0x3ef),None)
+        if entry:
+            for side in range(2):examples['battle:side_'+str(side)]=entry['args']['side'+str(side)+'_group']
+        chapter=command if command and command['opcode']==0x3ec else next((c for c in self.commands if c['opcode']==0x3ec),None)
+        if chapter:examples['calendar']='\n'.join(chapter['args']['texts']);examples['system']=chapter['args']['texts'][-1]
+        retained=[];budget=4096
+        for c in self.commands:
+            if c['opcode']!=0x64:continue
+            value=c['args']['text']
+            if len(value)+1>budget or len(retained)>=12:break
+            retained.append(value);budget-=len(value)+1
+        examples['backlog']='\n'.join(retained)
+        self.image_panel.set_source(self.session.root,self.session.descriptions,self.session.text,
+                                    sample['args']['text'] if sample else '',sample['args']['speaker'] if sample else -1,examples)
+        self.image_panel.set_project(self.project)
+        self.image_panel.show();self.image_panel.raise_();self.image_panel.activateWindow()
+
+    def inspect_image_use(self,script,original_index):
+        self.pause();index=original_index
+        if self.project is not None:
+            index=next((i for i,c in enumerate(self.project.scripts[script].commands)
+                        if c.original_index==original_index),None)
+            if index is None:self.problem('That original command was removed from the current project.');return
+        self.selector.setCurrentIndex(self.selector.findData(script));self.select_command(index)
+        self.workspace_tabs.setCurrentIndex(0)
 
 
 STYLE='''

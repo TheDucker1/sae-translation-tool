@@ -1,4 +1,4 @@
-# Proportional dialogue font assets
+# Dialogue and UI font assets
 
 The optional font feature generates a bitmap override from your supplied game
 font. It works through the existing asset-loading path on Vita/Vita3K and the PC
@@ -8,10 +8,10 @@ outputs and are not included in this repository.
 ## Use
 
 1. Load the original USRDIR and open your translation project.
-2. **Auto-fit text…** -> choose the scope -> check **Proportional dialogue font
-   asset** -> **Analyze again**.
-3. Review text/page proposals and the font update notice. **Apply** commits the
-   selected text and font together. Ordinary text-form Apply and MCP translations
+2. **Auto-fit text…** -> choose the scope -> check **Proportional dialogue + readable
+   UI font asset** and keep **Include translated UI text** enabled -> **Analyze again**.
+3. Review script/UI proposals and the font update notice. **Apply** commits the
+   selected script/UI text and font together in one Undo. Text-form Apply and MCP translations
    then use the selected font's aliases and fitting metrics.
 4. Save the project and export to a new/empty folder. The selected `Font.gsf` is
    included automatically. Select that exported data manually in your player or
@@ -25,6 +25,31 @@ The older **Full-width Latin** option alone uses wider fixed cells. The
 proportional-font option additionally supplies variable-width bitmap glyphs and
 uses them when fitting. Speaker text stays unchanged during that conversion.
 
+The active game font has two cursor behaviours. Dialogue, battle text, results
+and verified dialog/profile-response layouts use measured advances. Choices,
+help, menu labels and profile descriptions use fixed half/full cells even when
+the bitmap glyph has a different width. Full-width proportional aliases on those
+fixed paths caused widely separated letters and incorrect centering.
+
+With a proportional font selected, text-form Apply, MCP translation edits and
+Auto-fit now restore ordinary Latin in fixed-cursor script labels. Run Auto-fit
+again to repair existing choice/topic/caption and translated environment/help/
+catalogue strings together. The dialogue aliases stay in their measured layouts.
+New UI translations match verified consumers on Apply automatically. Save and
+export a new copy after either repair.
+
+Font generator revision3 supplies readable bitmap Latin letters for fixed-cursor
+UI, using the same original font face as dialogue. ASCII retains the native cursor
+width, while the bitmap supplies correctly sized letter ink. These letters avoid
+the PVF precache-cell compression. Their advances and proportional dialogue glyphs
+are preserved. Auto-fit proposes the font upgrade even when text stays identical.
+Fixed-cursor UI remains monospaced; lettering baked into textures has its own artwork.
+The selected font's shorter ASCII-space measurement can still cause a small
+centering difference in fixed UI. Assets cannot supply proportional cursor steps
+to that active DrawString path. Unverified consumers are labeled explicitly and
+retain their text during repair. Input glyphs, placeholders, native separators,
+hidden suffixes and original untouched fields are preserved.
+
 ## Existing font updates
 
 With a saved font project, keep the proportional option checked and analyze again.
@@ -33,9 +58,25 @@ Apply can update only the font even when no script text changes. Save/export a
 new copy afterward. Uncheck the option and reanalyze to keep the embedded older
 font; use Undo to reverse an applied change.
 
-Generator revision 2 tightens apostrophe masks and removes excess quote padding.
+Generator revision2 tightened apostrophe masks; revision3 added readable UI bitmaps.
+Revision4 recalculates dialogue advances from actual draw size and native double
+truncation, targeting about one pixel of clearance at the authored default size.
+The previous padding added too much tracking on top of the engine's implicit
+cached-glyph pixel. Measured text also selects supported narrow quote glyphs for
+ASCII apostrophes/double quotes, including contractions. UI bitmaps are preserved.
+Run Auto-fit with the font option checked to review the revision4 upgrade. Enable
+Reflow existing line breaks to repack older wrapping if desired, then Apply/Save
+and export a new copy. Explicit authored breaks remain hard by default.
 It preserves literal spaces in the script; it does not guess which spaces the
 translator intended or introduce pair-specific kerning.
+
+Revision5 adds one bitmap cache entry for the storage-space error prompt. The
+native program appends its capacity value as a single UTF16 codepoint rather
+than decimal text. That existing runtime codepoint now draws **7456** using the
+original font's digits. The original charset and glyph records remain intact;
+no marker is inserted into translated strings. Auto-fit measures the same glyph
+inside the combined prompt and proposes the font update through normal Apply,
+Undo, save and separate export. Other dialogue/UI advances are unchanged.
 
 ## Limits
 
@@ -45,9 +86,15 @@ translator intended or introduce pair-specific kerning.
 - Original Japanese glyph records/atlas are retained. ASCII word spaces become
   shorter globally, which can affect spacing/centering elsewhere.
 - This uses per-glyph optical spacing, not kerning pairs or complex shaping.
+  The original typeface was designed for fixed cells. Cropping its ink does not
+  recreate proportional bearings: letters such as `j` can still leave visible
+  gaps around their stems. The cached asset format supplies no independent
+  horizontal bearing or pair-kerning field. This is not fully typeset Latin text;
+  a different Latin glyph design could improve its appearance further.
   Non-ASCII Latin extensions are not generally supported by the script encoding.
-- Existing authored breaks stay hard. Timed, queued and retained-buffer Auto-fit
-  restrictions remain; unsupported timed explicit breaks are rejected.
+- Existing authored breaks stay hard unless Reflow existing line breaks is enabled.
+  Timed text can use verified space padding with intact directive times. Queued
+  and append messages must fit one message; inherited buffers need display context.
 - Inspect appearance, clipping and positioning in the target game. The editor's
   placeholder preview does not certify native pixel or animation parity.
 

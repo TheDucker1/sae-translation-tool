@@ -92,6 +92,7 @@ class Session:
                                  opcodes={str(k):v for k,v in counts.items()},links=links))
         self.root=root;self.original=originals;self.descriptions=descriptions;self.overrides={}
         self.profile_metadata=profile_metadata
+        self.original_profile_metadata=profile_metadata;self.original_settings=settings
         self.asset_counts=[len(Archive(archive.read(i)).entries) for i in (5,9,10)]
         self.rule_count=len(Archive(archive.read(11)).entries);self.model_count=len(Archive(archive.read(0)).entries)
         self.metadata=metadata;self.text=presentation;self.original_text=presentation;self.settings=settings;self.revision='original';self.reset(0)
@@ -103,7 +104,7 @@ class Session:
 
     def candidate(self):
         candidate=Session()
-        for key in ('root','original','descriptions','metadata','text','original_text','settings','revision','profile_metadata','asset_counts','rule_count','model_count'):
+        for key in ('root','original','descriptions','metadata','text','original_text','settings','revision','profile_metadata','original_profile_metadata','original_settings','asset_counts','rule_count','model_count'):
             setattr(candidate,key,getattr(self,key))
         candidate.overrides=self.overrides.copy()
         return candidate
@@ -111,11 +112,23 @@ class Session:
     def adopt(self,candidate):
         lock=self.lock;self.__dict__.update(candidate.__dict__);self.lock=lock
 
-    def apply_revision(self,scripts,revision_id,entry,apply=True,font_asset=None,**_):
+    def apply_revision(self,scripts,revision_id,entry,apply=True,font_asset=None,ui_text_assets=None,**_):
         candidate=self.candidate();candidate.overrides={};candidate.revision=revision_id;issues=[]
         from .fontpatch import effective_font
         original=self.original_text
         candidate.text=effective_font(type('FontProject',(),dict(root=self.root,font_asset=font_asset))(),original)
+        candidate.profile_metadata=self.original_profile_metadata;candidate.settings=self.original_settings
+        if ui_text_assets:
+            from .uitext import build_catalog,prepare,effective_node
+            catalog=build_catalog(self.root);prepare(ui_text_assets,self.root,catalog,check_metadata=False)
+            def read_asset(source,route):
+                identity=source+':'+('/'.join(map(str,route)))
+                return effective_node(catalog,identity,ui_text_assets) if identity in catalog.nodes else catalog.read(source,route)[0]
+            if any(key.startswith(('env/env_otaku_mode.dat:','first.dat:3/','resource.dat:3/1/')) for key in ui_text_assets):
+                archive=Archive(catalog.source('resource.dat'));scripts_archive=Archive(archive.read(4))
+                candidate.profile_metadata=profileflow.load(self.root,archive,[e.name for e in scripts_archive.entries],read_asset)
+            if any(key.startswith('env/env_tukkomi.dat:') for key in ui_text_assets):
+                candidate.settings=dict(self.original_settings,battle=environments.battle(read_asset('env/env_tukkomi.dat',())))
         for item in scripts:
             sid=item['id']
             if sid not in self.original:raise ValueError('Edited script ID outside corpus')
@@ -210,7 +223,7 @@ class Session:
             # Candidate copy prevents an invalid forced branch from corrupting
             # the active preview or tape.
             candidate=self.candidate();candidate.__dict__.update(deepcopy({k:v for k,v in self.__dict__.items()
-                if k not in {'lock','text','settings','original','descriptions','metadata','overrides','profile_metadata','asset_counts','rule_count','model_count'}}))
+                if k not in {'lock','text','settings','original_settings','original_profile_metadata','original','descriptions','metadata','overrides','profile_metadata','asset_counts','rule_count','model_count'}}))
             candidate.force_choice(action.get('choice',0),action.get('child',0))
             self.adopt(candidate)
         if op=='step' and (not isinstance(action.get('dt',16),int) or action.get('dt',16)<0):

@@ -3,7 +3,33 @@ import argparse,hashlib,json,math,struct
 from pathlib import Path
 from .text import TextPresentation,font_atlas
 
-GENERATOR_REVISION=2
+GENERATOR_REVISION=5
+STORAGE_GLYPH=0x1d20
+STORAGE_AMOUNT='7456'
+
+
+def storage_glyph(raw,font):
+    """Repair the native integer-as-UTF16 append through its existing cache key."""
+    indexes=raw.glyphIndexesForString(STORAGE_AMOUNT);runs=[];x=0
+    if len(indexes)!=len(STORAGE_AMOUNT) or not all(indexes):raise ValueError('Original font has no storage amount digits')
+    for index in indexes:
+        rect=raw.boundingRect(index);left=math.floor(rect.left());ink=math.ceil(rect.right())-left
+        runs.append((index,x-left));x+=ink+1
+    return dict(character=STORAGE_GLYPH,source=STORAGE_AMOUNT,index=None,left=0,
+        width=dialogue_width(x-1,font,1),runs=runs,fixed=False)
+
+
+def dialogue_width(ink_width,font,gap):
+    """Record width whose native advance clears drawn ink by the requested gap."""
+    pixels=int(font.utility*font.scale)
+    if pixels<=0 or font.scale<=0:raise ValueError('Invalid dialogue font scale')
+    target=math.ceil(ink_width*pixels/font.bitmap_height)+gap
+    # Measurement first scales a nominal36 record at utility size and adds1,
+    # then layout truncates after body scaling. Drawing instead uses bitmap24.
+    for width in range(max(1,math.ceil(ink_width)),256):
+        advance=int(int(1+width*font.utility/36)*font.scale)
+        if advance>=target:return width
+    raise ValueError('Dialogue glyph advance exceeds the GSF record width')
 
 
 def sections(data):
@@ -35,6 +61,9 @@ def build(root):
     optically cropped because the authored Latin hmtx itself is fixed-width.
     Record width is in nominal36 measurement units, image ink in bitmap24 units;
     transparent right padding reconciles existing measurement/draw scaling.
+    Fixed-cursor ASCII records retain nominal36 measurement while their ink
+    occupies a12px half-cell at bitmap24. The remaining pixels are transparent;
+    sampling these directly avoids compressing the full PVF precache cell.
     """
     from PySide6.QtCore import QByteArray,QPointF
     from PySide6.QtGui import QRawFont,QFont,QImage,QPainter,QGlyphRun,QColor,QGuiApplication
@@ -44,10 +73,11 @@ def build(root):
     if height!=24:raise ValueError('This generator requires the original24px GSF asset; do not stack font patches')
     raw=QRawFont();raw.loadFromData(QByteArray(font.font_data),22,QFont.PreferDefaultHinting)
     if not raw.isValid():raise ValueError('Cannot open the original TTC')
-    codes=[(c,chr(ord(c)+0xfee0)) for c in map(chr,range(33,127)) if c!='_']
-    codes.extend((c,c) for c in '‘’“”…―')
+    codes=[(c,chr(ord(c)+0xfee0),False) for c in map(chr,range(33,127)) if c!='_']
+    codes.extend((c,c,False) for c in '‘’“”…―')
+    codes.extend((c,c,True) for c in map(chr,range(33,127)) if c not in font.cached)
     glyphs=[]
-    for c,alias in codes:
+    for c,alias,fixed in codes:
         if alias in font.cached:raise ValueError('Source already has Latin bitmap overrides; use the original Font.gsf')
         try:
             if alias.encode('cp932').decode('cp932')!=alias:continue
@@ -59,37 +89,44 @@ def build(root):
         # detached, and this Japanese font's apostrophe shape is unusually wide.
         # Tighten ink and outgoing advance without touching script spaces.
         single_quote=c in "'‘’";quote=c in "'\"‘’“”"
-        ink_width=min(ink,3) if single_quote else ink
-        width=max(1,math.ceil((ink_width+(0 if quote else 2))*nominal/height))
-        glyphs.append(dict(character=ord(alias),source=c,index=ids[0],left=left,width=width,ink_scale=ink_width/ink))
+        ink_width=min(ink,11) if fixed else min(ink,3) if single_quote else ink
+        width=nominal if fixed else dialogue_width(ink_width,font,0 if quote else 1)
+        padding=(12-ink_width)/2 if fixed else 0
+        glyphs.append(dict(character=ord(alias),source=c,index=ids[0],left=left,width=width,
+                           ink_scale=ink_width/ink,padding=padding,fixed=fixed))
     baseline=math.ceil(max(-raw.boundingRect(g['index']).top() for g in glyphs))
     bottom=max(math.ceil(raw.boundingRect(g['index']).bottom()) for g in glyphs)
     if baseline+bottom>height:raise ValueError('Latin ink exceeds the original shared bitmap height')
+    glyphs.append(storage_glyph(raw,font))
     # Native ASCII-space measurement halves the recorded width. Its blank mask
     # has no ink, so a doubled metadata width supplies a normal short word space.
-    glyphs.append(dict(character=32,source=' ',index=None,left=0,width=18))
-    atlas_width=512;atlas_height=128;coverage=bytearray(atlas_width*atlas_height)
+    glyphs.append(dict(character=32,source=' ',index=None,left=0,width=18,fixed=False))
+    atlas_width=512;atlas_height=512;coverage=bytearray(atlas_width*atlas_height)
     records=[];x=1;y=1;report=[]
     for g in glyphs:
         width=g['width']
         if x+width+1>atlas_width:x=1;y+=height+2
         if y+height+1>atlas_height:raise ValueError('Latin atlas exceeded bounded capacity')
         image=QImage(width,height,QImage.Format_RGBA8888);image.fill(0)
-        if g['index'] is not None:
-            run=QGlyphRun();run.setRawFont(raw);run.setGlyphIndexes([g['index']]);run.setPositions([QPointF(-g['left'],baseline)])
-            painter=QPainter(image);painter.setPen(QColor('white'));painter.scale(g['ink_scale'],1);painter.drawGlyphRun(QPointF(0,0),run);painter.end()
+        if g['index'] is not None or g.get('runs'):
+            runs=g.get('runs',[(g['index'],-g['left'])])
+            run=QGlyphRun();run.setRawFont(raw);run.setGlyphIndexes([i for i,x in runs]);run.setPositions([QPointF(x,baseline) for i,x in runs])
+            painter=QPainter(image);painter.setPen(QColor('white'));painter.translate(g.get('padding',0),0);painter.scale(g.get('ink_scale',1),1);painter.drawGlyphRun(QPointF(0,0),run);painter.end()
         pixels=bytes(image.constBits())
         for row in range(height):
             for col in range(width):coverage[(y+row)*atlas_width+x+col]=pixels[(row*width+col)*4+3]
         records.append(struct.pack('<4H2B',g['character'],len(parts)-2,x,y,width,height))
-        report.append(dict(codepoint=g['character'],source=g['source'],record_width=width,atlas_rect=[x,y,width,height]))
+        report.append(dict(codepoint=g['character'],source=g['source'],record_width=width,atlas_rect=[x,y,width,height],fixed_cursor=g['fixed']))
         x+=width+2
     atlas=p8_atlas(atlas_width,atlas_height,bytes(coverage));font_atlas(atlas)
     output=pack(parts[:-2]+[atlas,parts[-2]+b''.join(records),parts[-1]])
     manifest=dict(format='saekano-proportional-font',version=1,generator_revision=GENERATOR_REVISION,source_sha256=hashlib.sha256(original).hexdigest(),
         font_sha256=hashlib.sha256(output).hexdigest(),font_file='Font.gsf',executable_changes=False,
         nominal=nominal,bitmap_height=height,glyphs=report,
-        scope='Dialogue layout using cached GSF measurement; full-width Latin aliases, CP932 smart punctuation and shorter ASCII word space.',
+        scope='Proportional dialogue aliases and readable fixed-cursor Latin bitmap cells from the same font face.',
+        ui_bitmap_cells=True,ui_cell_ink_width=11,
+        native_storage_amount=dict(codepoint=STORAGE_GLYPH,text=STORAGE_AMOUNT,reason='Native capacity value is appended as one UTF16 unit'),
+        dialogue_spacing='native_scaled_ink_plus_gap',dialogue_gap_pixels=1,
         limitations=['Simple DrawString names/UI still use fixed cursor advances.',
                     'Use matching patched font metrics when rewrapping scripts.',
                     'ASCII spaces become shorter globally; Japanese glyph records and atlases are unchanged.',

@@ -16,7 +16,7 @@ def points(reader):return [[reader.word('i'),reader.word('i')] for _ in range(re
 def sprite(reader,legacy=True):
     parameter=reader.word('h' if legacy else 'i')
     values=[reader.word('i') for _ in range(7)];rgba=color(reader.word())
-    return dict(parameter=parameter,alignment=values[0],x=values[1],y=values[2],
+    return dict(parameter=parameter,alignment=values[0],x=values[1],y=values[2],sx=values[3],sy=values[4],
                 width=values[5],height=values[6],color=rgba)
 
 
@@ -49,9 +49,9 @@ def battle(data):
     for _ in range(4):table(r,8)
     settings=[r.word('i') for _ in range(13)]
     duration=r.word('i');display=r.word('i');x_per_point=r.word('i');scale_per_point=r.word('f')
-    r.take(16);choice_positions=points(r);table(r,34);r.word('f')
+    r.take(16);choice_positions=points(r);table(r,34);card_scale=r.word('f')
     choice_offsets=[[r.word('i'),r.word('i')] for _ in range(2)]
-    r.take(3*12);labels=[r.string() for _ in range(r.count())]
+    pulses=[[r.word('f'),r.word('f'),r.word('i')] for _ in range(3)];labels=[r.string() for _ in range(r.count())]
     label_positions=points(r);label_scale=r.word('f')
     if not 0<=minimum<=50 or duration<0:raise ValueError('Invalid battle gauge settings')
     return dict(minimum=minimum,neutral=neutral,duration=duration,display=display,x=x_per_point,
@@ -60,7 +60,7 @@ def battle(data):
                 name_positions=name_positions,name_sizes=name_sizes,name_offsets=name_offsets,names=names,
                 text_positions=text_positions,padding=padding,colors=colors,choice_positions=choice_positions,
                 choice_offsets=choice_offsets,labels=labels,label_positions=label_positions,label_scale=label_scale,
-                choice_reveal=settings[3])
+                choice_reveal=settings[3],card_scale=card_scale,pulses=pulses)
 
 
 def approach(data):

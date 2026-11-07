@@ -54,6 +54,8 @@ class Project:
         self.text_format=TextFormat(format_path.read_bytes()) if format_path and format_path.is_file() else None
         self.selection_layout=None
         self.font_asset=None
+        self.texture_assets={};self._texture_catalog=None
+        self.ui_text_assets={};self._ui_text_catalog=None
         selection_path=Path(root)/'env/env_script_select.dat' if root else None
         if selection_path and selection_path.is_file():
             from .environments import selection
@@ -123,8 +125,17 @@ class Project:
             records.append(codec.RawRecord(c.opcode,payload,c.post,0))
         return codec.assemble(bytes.fromhex(script.header),records,bytes.fromhex(script.tail))
 
+    def ui_metadata_issues(self):
+        if not self.ui_text_assets:return []
+        from .uitext import get_catalog,metadata_issues
+        return metadata_issues(self.ui_text_assets,get_catalog(self))
+
     def validate(self):
         out=[];locations=self.locations();total=sum(len(s.commands) for s in self.scripts.values())
+        if self.ui_text_assets:
+            from .uitext import get_catalog,validate_records
+            try:validate_records(self.ui_text_assets,get_catalog(self))
+            except (ValueError,KeyError,OSError,TypeError) as error:out.append(Diagnostic(-1,None,'UI text: '+str(error)))
         if self.font_asset:
             from .fontpatch import validate_asset
             try:validate_asset(self.font_asset,self.root)
@@ -192,7 +203,7 @@ class Project:
         before=self.scripts.copy();draft=deepcopy(self.scripts[sid]);change(draft)
         self.scripts=self.scripts.copy();self.scripts[sid]=draft
         self.touched.add(sid)
-        self.undo_stack.append((label,before,self.scripts.copy()));self.redo_stack.clear();self.preview_issues=[];self.revision=uuid.uuid4().hex
+        self.remember((label,before,self.scripts.copy()));self.redo_stack.clear();self.preview_issues=[];self.revision=uuid.uuid4().hex
 
     def add(self,sid,index,opcode,args):
         if opcode not in TEXT_OPS:raise EditError('Only text opcodes can be inserted')
@@ -238,11 +249,67 @@ class Project:
         if self.undo_stack:
             item=self.undo_stack.pop();self.redo_stack.append(item);self.scripts=item[1];self.preview_issues=[];self.revision=uuid.uuid4().hex
             if len(item)>3:self.font_asset=item[3]
+            if len(item)>5:self.texture_assets=item[5]
+            if len(item)>7:self.ui_text_assets=item[7]
 
     def redo(self):
         if self.redo_stack:
             item=self.redo_stack.pop();self.undo_stack.append(item);self.scripts=item[2];self.preview_issues=[];self.revision=uuid.uuid4().hex
             if len(item)>3:self.font_asset=item[4]
+            if len(item)>5:self.texture_assets=item[6]
+            if len(item)>7:self.ui_text_assets=item[8]
+
+    def remember(self,item):
+        """Every kind of transaction retains the same auxiliary asset snapshots."""
+        if len(item)==3:item=(*item,self.font_asset,self.font_asset)
+        if len(item)==5:item=(*item,self.texture_assets,self.texture_assets)
+        if len(item)==7:item=(*item,self.ui_text_assets,self.ui_text_assets)
+        self.undo_stack.append(item)
+
+    def set_ui_texts(self,edits):
+        from .uitext import get_catalog,make_record,prepare
+        c=get_catalog(self);before=self.ui_text_assets;after=before.copy()
+        seen=set()
+        for identity,expected,text in edits:
+            if identity in seen:raise EditError('Duplicate UI text field in batch')
+            seen.add(identity)
+            if identity not in c.fields:raise EditError('Unknown UI text field_id')
+            current=before[identity]['text'] if identity in before else c.fields[identity]['original']
+            if expected!=current:raise EditError('UI text changed; re-read the current field before editing')
+            if self.font_asset and text!=c.fields[identity]['original']:
+                from .fontstyle import ui_proposal
+                text=ui_proposal(self,identity,text,None)['text']
+            record=make_record(c,identity,text)
+            if text==c.fields[identity]['original']:after.pop(identity,None)
+            else:after[identity]=record
+        if before==after:return False
+        prepare(after,self.root,c,check_metadata=False)  # Draft persistence; publication capacities are export checks.
+        scripts=self.scripts.copy()
+        self.remember(('Edit UI text',scripts,scripts,self.font_asset,self.font_asset,self.texture_assets,self.texture_assets,before,after))
+        self.ui_text_assets=after;self.redo_stack=[];self.revision=uuid.uuid4().hex
+        return True
+
+    def set_texture(self,identity,data,catalog):
+        from .textureassets import make_replacement,check_budget
+        if Path(self.root).resolve()!=catalog.root:raise EditError('Texture catalog belongs to another game source')
+        record=make_replacement(catalog,identity,data);before=self.texture_assets;after=dict(before,**{identity:record})
+        check_budget(after)
+        if before.get(identity)==record:return False
+        self._texture_catalog=catalog;self._texture_transaction('Replace texture PNG',before,after);return True
+
+    def remove_texture(self,identity):
+        if identity not in self.texture_assets:raise EditError('Texture has no project replacement')
+        before=self.texture_assets;after=before.copy();del after[identity]
+        self._texture_transaction('Revert texture to original',before,after)
+
+    def _texture_transaction(self,label,before,after):
+        scripts=self.scripts.copy()
+        self.remember((label,scripts,scripts,self.font_asset,self.font_asset,before,after))
+        self.texture_assets=after;self.redo_stack=[];self.revision=uuid.uuid4().hex
+
+    def scenario_key(self):
+        """Immutable script/font identities; PNG-only edits do not alter VM semantics."""
+        return tuple((sid,id(script)) for sid,script in sorted(self.scripts.items())),id(self.font_asset),id(self.ui_text_assets)
 
     def revision_request(self,entry,apply=True,validated=False):
         errors=[] if validated else self.validate()
@@ -251,7 +318,7 @@ class Project:
         for sid in sorted(self.touched):
             s=self.scripts[sid];blob=self.compile(sid,locations)
             if blob.hex()!=s.original:scripts.append(dict(id=sid,data_hex=blob.hex(),check_text=[i for i,c in enumerate(s.commands) if c.authored]))
-        return dict(scripts=scripts,revision_id=self.revision,entry=entry,apply=apply,font_asset=self.font_asset)
+        return dict(scripts=scripts,revision_id=self.revision,entry=entry,apply=apply,font_asset=self.font_asset,ui_text_assets=self.ui_text_assets)
 
     def display(self,sid):
         locations=self.locations();rows=[];offset=8+len(bytes.fromhex(self.scripts[sid].header))
@@ -289,14 +356,25 @@ class Project:
         path=Path(path).resolve()
         if self.root and path.is_relative_to(Path(self.root).resolve()):raise EditError('Never save editor projects into original USRDIR')
         if path.is_relative_to((ROOT.parent/'impacto-sae').resolve()):raise EditError('Keep editor projects outside the Impacto checkout')
-        data=dict(format='saekano-editor',version=1,root=self.root,revision=self.revision,touched=sorted(self.touched),fingerprints=self.fingerprints(),scripts=[asdict(self.scripts[sid]) for sid in sorted(self.touched)])
+        from .textureassets import validate_collection
+        self._texture_catalog=validate_collection(self.texture_assets,self.root,self._texture_catalog)
+        if self.ui_text_assets:
+            from .uitext import get_catalog,validate_records
+            validate_records(self.ui_text_assets,get_catalog(self))
+        data=dict(format='saekano-editor',version=3 if self.ui_text_assets else 2 if self.texture_assets else 1,root=self.root,revision=self.revision,touched=sorted(self.touched),fingerprints=self.fingerprints(),scripts=[asdict(self.scripts[sid]) for sid in sorted(self.touched)])
         if self.font_asset:data['font_asset']=self.font_asset
+        if self.texture_assets:data['texture_assets']=self.texture_assets
+        if self.ui_text_assets:data['ui_text_assets']=self.ui_text_assets
         temp=path.with_name(path.name+'.tmp');temp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(path);self.saved_revision=self.revision
 
     @classmethod
     def load(cls,path,base):
         data=json.loads(Path(path).read_text(encoding='utf-8'))
-        if data.get('format')!='saekano-editor' or data.get('version')!=1:raise EditError('Unsupported editor project format')
+        if data.get('format')!='saekano-editor' or data.get('version') not in (1,2,3):raise EditError('Unsupported editor project format')
+        if data['version']==2 and 'texture_assets' not in data:raise EditError('Texture project payload is missing')
+        if data['version']==1 and data.get('texture_assets'):raise EditError('Texture project requires format version2')
+        if data['version']==3 and not data.get('ui_text_assets'):raise EditError('UI text project payload is missing')
+        if data['version']<3 and data.get('ui_text_assets'):raise EditError('UI text project requires format version3')
         if data['fingerprints']!=base.fingerprints():raise EditError('Project original scripts do not match the imported game data')
         scripts=base.baseline.copy()
         for raw in data['scripts']:
@@ -305,6 +383,13 @@ class Project:
             scripts[script.id]=script
         project=cls(list(scripts.values()),base.root);project.baseline=base.baseline.copy();project.profile_links=base.profile_links
         project.font_asset=data.get('font_asset')
+        from .textureassets import validate_collection
+        project.texture_assets=data.get('texture_assets',{})
+        project.ui_text_assets=data.get('ui_text_assets',{})
+        if project.ui_text_assets:
+            from .uitext import get_catalog,prepare
+            prepare(project.ui_text_assets,base.root,get_catalog(project),check_metadata=False)
+        project._texture_catalog=validate_collection(project.texture_assets,base.root)
         if project.font_asset:
             from .fontpatch import validate_asset
             validate_asset(project.font_asset,base.root)

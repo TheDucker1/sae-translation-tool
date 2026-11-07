@@ -1,4 +1,5 @@
 """Analyze/review existing translation cleanup before one atomic Apply."""
+import json
 from PySide6.QtCore import Qt,QTimer
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QCheckBox,
     QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QHeaderView,QPlainTextEdit,QSplitter)
@@ -14,19 +15,24 @@ class AutoFitDialog(QDialog):
         self.skip_japanese=QCheckBox('Skip Japanese text');self.skip_japanese.setChecked(True);self.skip_japanese.setToolTip('Kana/Han character check; speaker names and control tags are excluded. Includes other scripts. Uncheck for mixed/Japanese/Chinese text.');row.addWidget(self.skip_japanese)
         self.hyphen=QCheckBox('Hyphenate long words');self.hyphen.setChecked(True);row.addWidget(self.hyphen)
         self.split=QCheckBox('Split overflowing dialogue');self.split.setChecked(True);row.addWidget(self.split);layout.addLayout(row)
+        self.reflow=QCheckBox('Reflow existing line breaks (repair older wrapping)')
+        self.reflow.setToolTip('Treat existing dialogue breaks as spaces before fitting. Enable to repair text previously fitted to the wrong width. Leave off to preserve deliberate breaks.')
+        layout.addWidget(self.reflow)
         self.full_width=QCheckBox('Full-width Latin for readability (convert, then fit)')
-        self.full_width.setToolTip('Optional for the current PVF player: wider supported Latin glyphs. Controls, spaces and reserved breaks are preserved; extra pages may be needed.')
+        self.full_width.setToolTip('Convert supported Latin before fitting. With a proportional font selected, measured text uses its aliases and fixed-cursor labels use ordinary Latin. Controls and reserved breaks are preserved.')
         layout.addWidget(self.full_width)
-        self.proportional=QCheckBox('Proportional dialogue font asset (Vita + PC; no executable changes)')
-        self.proportional.setChecked(bool(self.project.font_asset));self.proportional.setToolTip('Generate and save/export a Font.gsf bitmap override. Refit selected dialogue using those widths; speaker/UI DrawString spacing remains fixed. Undo restores font plus text.')
+        self.proportional=QCheckBox('Proportional dialogue + readable UI font asset (Vita + PC)')
+        self.proportional.setChecked(bool(self.project.font_asset));self.proportional.setToolTip('Generate or upgrade Font.gsf with proportional dialogue and readable bitmap UI letters. Review script/UI proposals and apply everything in one Undo operation.')
         layout.addWidget(self.proportional)
-        row=QHBoxLayout();self.mode=QComboBox()
-        for label,value in [('Auto dialogue layout','auto'),('Message window','ordinary'),('Battle dialogue','battle')]:self.mode.addItem(label,value)
-        row.addWidget(self.mode)
+        self.include_ui=QCheckBox('Include translated UI text (menus, settings, help and catalogues)')
+        self.include_ui.setToolTip('Normalize with the final font first, then fit native multiline text and check labels, grouped help and formatted values. Review overflow/context diagnostics and preview checked proposals.')
+        self.include_ui.setChecked(True);layout.addWidget(self.include_ui)
+        row=QHBoxLayout();row.addWidget(QLabel('Layout detected from each command and script'))
         self.width=self.spin(row,'Multiline width',4096,'Authored');self.lines=self.spin(row,'Lines/page',20,'Fit frame')
         self.label_width=self.spin(row,'Single-line width',4096,'Auto screen fit');layout.addLayout(row)
         actions=QHBoxLayout();analyze=QPushButton('Analyze again');analyze.clicked.connect(self.analyze);actions.addWidget(analyze)
         self.apply_button=QPushButton('Apply checked changes');self.apply_button.setEnabled(False);self.apply_button.clicked.connect(self.accept);actions.addWidget(self.apply_button)
+        preview=QPushButton('Preview selected UI…');preview.clicked.connect(self.preview_ui);actions.addWidget(preview)
         cancel=QPushButton('Cancel');cancel.clicked.connect(self.reject);actions.addWidget(cancel);layout.addLayout(actions)
         self.status=QLabel();self.status.setWordWrap(True);layout.addWidget(self.status)
         splitter=QSplitter(Qt.Vertical);self.table=QTableWidget(0,4);self.table.setHorizontalHeaderLabels(['Apply','File / command','Result','Details'])
@@ -34,8 +40,8 @@ class AutoFitDialog(QDialog):
         self.table.setSelectionBehavior(QTableWidget.SelectRows);self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.itemSelectionChanged.connect(self.inspect);splitter.addWidget(self.table)
         self.review=QPlainTextEdit();self.review.setReadOnly(True);splitter.addWidget(self.review);splitter.setSizes([360,260]);layout.addWidget(splitter,1)
-        for widget in (self.scope,self.mode):widget.currentIndexChanged.connect(self.invalidate)
-        for widget in (self.skip_japanese,self.hyphen,self.split,self.full_width,self.proportional):widget.toggled.connect(self.invalidate)
+        self.scope.currentIndexChanged.connect(self.invalidate)
+        for widget in (self.skip_japanese,self.hyphen,self.split,self.full_width,self.proportional,self.reflow,self.include_ui):widget.toggled.connect(self.invalidate)
         for widget in (self.width,self.lines,self.label_width):widget.valueChanged.connect(self.invalidate)
         QTimer.singleShot(0,self.analyze)
 
@@ -57,24 +63,36 @@ class AutoFitDialog(QDialog):
             self.plan=analyze_cleanup(self.project,self.owner.session.text,self.owner.session.settings,
                 script_ids=None if scope==2 else [self.owner.script_id],command_ids=uid,skip_japanese=self.skip_japanese.isChecked(),
                 hyphenate=self.hyphen.isChecked(),paginate=self.split.isChecked(),width=self.width.value() or None,
-                max_lines=self.lines.value() or None,label_width=self.label_width.value() or None,dialogue_mode=self.mode.currentData(),full_width_latin=self.full_width.isChecked(),proportional_latin=self.proportional.isChecked())
+                max_lines=self.lines.value() or None,label_width=self.label_width.value() or None,full_width_latin=self.full_width.isChecked(),proportional_latin=self.proportional.isChecked(),reflow=self.reflow.isChecked(),include_ui=self.include_ui.isChecked())
             self.table.setRowCount(0);self.review.clear();self.font_note=''
             if self.plan.get('font_changed'):
                 before=self.project.font_asset['manifest'].get('generator_revision',1) if self.project.font_asset else 'Original'
                 after=self.plan['font_asset']['manifest'].get('generator_revision',1)
                 self.font_note=f'Font asset update: {before} -> revision {after}. Saved/exported Font.gsf and preview metrics update with Apply; script text may stay unchanged. Undo restores both.'
+                if self.plan['font_asset']['manifest'].get('native_storage_amount'):
+                    self.font_note+=' Includes the asset-only repair of the native storage amount glyph (7456 KB).'
             for change in self.plan['changes']:
-                details=change['details'];description=f"{change['page_count']} page(s)" if change['page_count']>1 else 'Wrap / normalize'
+                details=change['details'];description='Convert only' if details[0].get('wrapping_skipped') else f"{change['page_count']} page(s)" if change['page_count']>1 else 'Space padding' if details[0].get('break_strategy')=='spaces' else 'Wrap / normalize'
                 capacity=f"; box fits {change['capacity']} lines" if change['capacity'] else ''
-                self.add_row(change['script_id'],change['command_id'],description,f"{max(d['line_count'] for d in details)} line(s)/page{capacity}",change,True)
+                boxes=', '.join(dict.fromkeys(f"{d['layout'].replace('_',' ')} {d['width']}px" for d in details))
+                self.add_row(change['script_id'],change['command_id'],description,f"{boxes}; {max(d['line_count'] for d in details)} line(s)/page{capacity}",change,True)
             for issue in self.plan['issues']:
                 m=issue.get('measurement');status='Reported / skipped'
                 if m:status='Context needed' if m['context_required'] else 'Fits / read-only' if m['fits'] else 'Overflow / read-only'
+                if m and m['auto_edit']:status=status.replace('read-only','conversion only')
                 self.add_row(issue['script_id'],issue['command_id'],status,issue['reason'],issue,False)
-            s=self.plan['summary'];self.status.setText(f"{s['scanned']} text commands scanned; {s['eligible']} eligible; {s['changed_commands']} changes; +{s['inserted_commands']} commands; {s['reported']} reported/skipped. Mechanical hyphens are not language-specific syllabification.")
+            for change in self.plan['ui_changes']:
+                self.add_row(None,change['field_id'],'UI layout' if change['renderer']=='layout_setting' else 'UI text',change['note'],change,True)
+            changed_ui={c['field_id'] for c in self.plan['ui_changes']}
+            for check in self.plan.get('ui_checks',[]):
+                if check['field_id'] not in changed_ui:self.add_row(None,check['field_id'],'Retained / not drawn' if check.get('fit_policy')=='retained' else 'UI checked',check['reason'],check,False)
+            s=self.plan['summary'];self.status.setText(f"{s['scanned']} text commands scanned; {s['changed_commands']} script changes; {s['changed_ui_fields']} UI changes; +{s['inserted_commands']} commands; {s['reported']} reported/skipped. Mechanical hyphens are not language-specific syllabification.")
             self.status.setText(self.status.text()+(' Font asset update pending.' if self.plan.get('font_changed') else ''))
+            self.status.setText(self.status.text()+f" {s.get('checked_ui_fields',0)} UI fields checked against their consumers.")
+            if s.get('retained_ui_fields'):self.status.setText(self.status.text()+f" {s['retained_ui_fields']} retained fields have no active display consumer.")
+            if s.get('ui_font_only'):self.status.setText(self.status.text()+f" {s['ui_font_only']} UI fields have font normalization only; their fit geometry is not implemented.")
             self.apply_button.setText('Apply font update + checked text' if self.plan.get('font_changed') else 'Apply checked changes')
-            self.apply_button.setEnabled(bool(self.plan['changes']) or self.plan.get('font_changed',False))
+            self.apply_button.setEnabled(bool(self.plan['changes'] or self.plan['ui_changes']) or self.plan.get('font_changed',False))
             if self.font_note:self.review.setPlainText(self.font_note)
             if self.table.rowCount():self.table.selectRow(0)
         except (ValueError,RuntimeError,KeyError) as error:self.plan=None;self.status.setText(str(error))
@@ -87,15 +105,31 @@ class AutoFitDialog(QDialog):
             check.setCheckState(Qt.Checked)
         else:check.setFlags(Qt.ItemIsEnabled|Qt.ItemIsSelectable)
         self.table.setItem(row,0,check)
-        for column,text in enumerate((f'{sid:03} / {uid}',status,note),1):self.table.setItem(row,column,QTableWidgetItem(text))
+        label=f'{sid:03} / {uid}' if sid is not None else 'UI / '+uid
+        for column,text in enumerate((label,status,note),1):self.table.setItem(row,column,QTableWidgetItem(text))
 
     def selected_commands(self):
         return [self.table.item(i,0).data(Qt.UserRole)['command_id'] for i in range(self.table.rowCount()) if self.table.item(i,0).checkState()==Qt.Checked]
+
+    def preview_ui(self):
+        row=self.table.currentRow()
+        if self.plan is None or row<0:return
+        try:
+            data=self.table.item(row,0).data(Qt.UserRole);key=data.get('field_id',data.get('command_id'))
+            from .uipreview import show_ui_preview
+            show_ui_preview(self.owner,self.project,key,plan=self.plan,selected=set(self.selected_commands()),modal=True)
+        except (ValueError,RuntimeError,OSError) as error:self.status.setText(str(error))
 
     def inspect(self):
         row=self.table.currentRow()
         if row<0 or self.table.item(row,0) is None:return
         data=self.table.item(row,0).data(Qt.UserRole)
+        if data.get('ui_check'):
+            self.review.setPlainText(data['reason']+'\n'+json.dumps(data['assessment'],ensure_ascii=False,indent=2));return
+        if 'field_id' in data:
+            self.review.setPlainText('\n'.join((self.font_note,data['note'],'BEFORE',data['before_text'],'AFTER',data['after_text'],
+                'CONSUMER / PREVIEW',json.dumps(data.get('contracts',[]),ensure_ascii=False,indent=2),
+                'FIT',json.dumps(data.get('assessment',[]),ensure_ascii=False,indent=2))));return
         if 'reason' in data:
             m=data.get('measurement');lines=[self.font_note,data['reason']]
             if m:

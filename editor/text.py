@@ -3,7 +3,6 @@
 Ports the editor-relevant textreveal/messagedraw/font semantics. Qt is the font
 rasterizer; no engine DLL is loaded. Scene/window art remains procedural.
 """
-import math
 import re
 import struct
 from pathlib import Path
@@ -202,8 +201,10 @@ class TextPresentation:
             self.cached[chr(code)]=(atlas,x,y,width,height);self.bitmap_height=height
         at,n=sections[-1];chars=Reader(data[at:at+n]);length=chars.word()
         if length!=n-4 or chars.word('H')!=0xfeff:raise ValueError('Invalid GSF characters')
-        self.charset=set(chars.take(n-6).decode('utf-16-le'))-set('"\r\n')
+        self.characters=''.join(c for c in units(chars.take(n-6).decode('utf-16-le')) if c not in '"\r\n')
+        self.charset=set(self.characters)
         self.font_data=(root/'DFHSR4.TTC').read_bytes();self.raw_font=None;self.glyph_cache={};self.atlas_cache={}
+        self.pvf_cells=None
 
     def measure(self, text, pixels):
         width=0;scale=pixels/36 if pixels else 1
@@ -253,8 +254,7 @@ class TextPresentation:
     def glyph(self, code):
         """Rasterize original TTC through Qt, only on the GUI thread."""
         from PySide6.QtCore import QByteArray
-        from PySide6.QtGui import QRawFont,QImage,QPainter,QColor,QGlyphRun,QFont
-        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QRawFont,QFont
         if code in self.glyph_cache:return self.glyph_cache[code]
         if chr(code) in self.cached:
             atlas,x,y,width,_=self.cached[chr(code)];height=self.bitmap_height
@@ -268,16 +268,10 @@ class TextPresentation:
         if self.raw_font is None:
             self.raw_font=QRawFont();self.raw_font.loadFromData(QByteArray(self.font_data),36*12.15/22*128/72,QFont.PreferDefaultHinting)
             if not self.raw_font.isValid():raise ValueError('Qt cannot open original TTC font')
-        font=self.raw_font;indices=font.glyphIndexesForString(chr(code))
-        if not indices or indices[0]==0:return {'missing':True}
-        advances=font.advancesForGlyphIndexes(indices);width=max(1,math.ceil(advances[0].x()));height=36
-        image=QImage(width,height,QImage.Format_RGBA8888);image.fill(0)
-        run=QGlyphRun();run.setRawFont(font);run.setGlyphIndexes(indices)
-        # Match nominal-cell baseline convention; Qt's outline rasterizer may
-        # differ slightly from the PC engine's FreeType grayscale hinting.
-        run.setPositions([QPointF(0,math.ceil(font.ascent()))])
-        painter=QPainter(image);painter.setPen(QColor('white'));painter.drawGlyphRun(QPointF(0,0),run);painter.end()
-        result=dict(width=width,height=height,rgba=bytes(image.constBits()).hex(),bitmap=False)
+            from .pvfraster import PvfCells
+            self.pvf_cells=PvfCells(bytes(self.raw_font.fontTable('head')),bytes(self.raw_font.fontTable('hhea')),self.characters)
+            self.raw_font.setPixelSize(self.pvf_cells.pixel_size)
+        result=self.pvf_cells.raster(self.raw_font,chr(code))
         self.glyph_cache[code]=result;return result
 
 

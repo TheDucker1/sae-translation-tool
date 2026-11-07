@@ -48,10 +48,33 @@ or Impacto checkout is required. Restart after application updates.
 Editable families: dialogue, ordinary choices, chapter captions, battle choices,
 approach topics/options, approach results and battle-introduction captions. Other
 commands retain the logical state/control flow needed for translation preview;
-native title/settings menus and non-script translation assets are outside this alpha.
+native menu interaction remains outside the scenario simulator. Read-only UI
+composition previews and non-script image inspection are available separately below.
 
 Structural changes can invalidate existing game saves/history. Export reports
 when fresh progress is required; it does not migrate personal saves.
+
+## Image assets
+
+**Load game → Images…** opens a read-only inventory across the full source data
+tree. Search/filter textures, view transparency and known atlas regions, inspect
+archive/member locations and literal script uses, and extract original image
+members and/or PNGs into a separate empty folder with a provenance manifest.
+**UI text…** separately discovers and edits environment/catalogue labels, prompts,
+settings/help, save messages, Extras titles, keywords and profile items/responses.
+These share Undo/save, scene previews and game export; protected resource/control
+fields are identified explicitly. See [UI text](docs/UI_TEXT.md).
+Images are decoded on selection. **Import PNG…** stores same-size lossless texture
+replacements in the editor project, with Undo/Redo and current/original comparison.
+Save the project to retain them. **Export game…** now merges texture, script and
+font edits into a separate patched USRDIR. GXT encoding is lossless and retains
+original dimensions/formats: P8 textures allow at most256 RGBA colors; opaque
+originals must stay opaque. Invalid replacements fail before copying files.
+**UI compositions…** assembles title/menu, gameplay message-window, system-menu,
+choices, calendar/chapter, shared-dialog, save/load, backlog, settings/help and
+Extras, profile/approach and battle layouts with preview states and inspectable
+layers. The coverage checklist records each family's limits.
+See [the image-browser guide](docs/IMAGE_ASSETS.md) for usage and coverage limits.
 
 ## Wrapping and readability
 
@@ -107,6 +130,15 @@ An agent should begin with `get_translation_guide` and `get_status`, or the
 `translate_script` prompt. Tools expose readable dialogue flow, opcode help,
 original/current text, reference-aware edits, validation, preview and explicit
 save/export. No model service or API key is built in.
+Visual tools also expose textures and all supported UI compositions as native MCP
+images plus structured geometry, layer/pass order, asset provenance and text.
+Start with `list_textures` or `list_ui_scenes`, then `describe_ui_scene` and
+`get_ui_scene`. `get_ui_scene_layers(kind="text")` reads UI strings/styles directly.
+These calls inspect snapshots without changing the human's GUI or project.
+`write_texture_png`, `import_texture_png` and `remove_texture_replacement` support
+texture authoring through the same workspace and revision rules. Use
+`check_texture_export` for a read-only GXT preflight, then `export_game_copy` only
+when a patched game-data copy is requested. No launcher or executable changes.
 See the [translator/tool guide](docs/TRANSLATOR_GUIDE.md).
 
 ## Development

@@ -6,7 +6,7 @@ import unicodedata
 import uuid
 from .engine import text_fields,TEXT_OPS
 from .text import units,unicode_text,TIMED_BREAK_ERROR
-from .textlayout import TextLayoutService,field_path,native_newlines,supports_breaks
+from .textlayout import TextLayoutService,field_path,native_newlines,supports_breaks,reflow_breaks
 from .scriptcodec import put
 from .semantics import flow_index
 
@@ -130,7 +130,7 @@ def split_pages(service,text,mode,width,max_lines,hyphenate):
 
 
 def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,skip_japanese=True,
-                    hyphenate=True,paginate=True,max_lines=None,width=None,label_width=None,dialogue_mode='auto',full_width_latin=False,proportional_latin=False):
+                    hyphenate=True,paginate=True,max_lines=None,width=None,label_width=None,dialogue_mode='auto',full_width_latin=False,proportional_latin=False,reflow=False,include_ui=True):
     if dialogue_mode not in {'auto','ordinary','battle'}:raise ValueError('Invalid dialogue layout mode')
     for value in (width,label_width):
         if value is not None and (isinstance(value,bool) or not isinstance(value,int) or not 1<=value<=4096):raise ValueError('Width must be1–4096px')
@@ -138,7 +138,8 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
     sids=sorted(project.scripts) if script_ids is None else sorted(set(script_ids));wanted=None if command_ids is None else set(command_ids)
     if any(sid not in project.scripts for sid in sids):raise ValueError('Unknown script ID')
     if wanted is not None and wanted-set(project.locations()):raise ValueError('Unknown command ID')
-    plan=dict(plan_id=uuid.uuid4().hex,revision=project.revision,changes=[],issues=[],scanned=0,eligible=0)
+    plan=dict(plan_id=uuid.uuid4().hex,revision=project.revision,changes=[],ui_changes=[],issues=[],scanned=0,eligible=0)
+    ui_font_only=0
     from .fontpatch import make_asset,effective_font,GENERATOR_REVISION
     font=effective_font(project,font)
     asset=project.font_asset
@@ -146,70 +147,85 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
     plan['font_changed']=asset!=project.font_asset
     if asset:
         font=effective_font(type('FontProject',(),dict(root=project.root,font_asset=asset))(),font)
-        plan['font_asset']=asset;full_width_latin=True
-    service=TextLayoutService(font,settings)
+        plan['font_asset']=asset
+    from .textregions import BattleTextRegions
+    regions=BattleTextRegions(project,font,settings)
     for sid in sids:
-        script=project.scripts[sid];ops={c.opcode for c in script.commands}
+        script=project.scripts[sid]
         retained_context=append_context_commands(project,sid)
-        auto_mode='battle' if 0x3ef in ops else 'ordinary';mode=auto_mode if dialogue_mode=='auto' else dialogue_mode
         for c in script.commands:
             if c.opcode not in TEXT_OPS or wanted is not None and c.uid not in wanted:continue
+            service=TextLayoutService(font,settings,project=project,script_id=sid,command=c,regions=regions)
+            mode=service.resolve_mode(dialogue_mode)
+            convert_width=full_width_latin or bool(asset and supports_breaks(c.opcode))
             plan['scanned']+=1
             fields=[(key,value) for key,value in text_fields(dict(opcode=c.opcode,args=c.args)) if value and (not skip_japanese or not japanese_text(value,font.format,c.opcode==0x64))]
             if not fields:continue
             plan['eligible']+=1
-            if asset and c.opcode not in {0x64,0x3f2,0x3f8}:
-                plan['issues'].append(dict(script_id=sid,command_id=c.uid,reason='This label uses fixed-cursor DrawString. The proportional dialogue font asset cannot change that spacing; no automatic rewrite proposed.'));continue
             try:
+                unsafe=[];conversion_packet=None;timed=False
                 if c.opcode==0x64:
                     parsed_geometry=font.format.ordinary(c.args['text'],geometry_only=True)
-                    unsafe=[]
-                    if parsed_geometry['markers']:unsafe.append('Timed SP QUE dialogue')
-                    if c.args['route']:unsafe.append('Queued dialogue')
+                    timed=bool(parsed_geometry['markers'])
                     if c.args['selector']:unsafe.append('Inherited/selector dialogue')
-                    if c.args['completion']:unsafe.append('Append/non-default completion dialogue')
                     if c.uid in retained_context:unsafe.append('Previous message may retain appended text')
                     if unsafe:
-                        geometry=service.measure_dialogue(c.args['text'],width=width,dialogue_mode=mode)
-                        capacity=dialogue_capacity(font,settings,mode)
+                        if convert_width:
+                            conversion_packet=service.convert_dialogue_width(c.args['text'],width=width,dialogue_mode=mode,preserve_speaker=bool(asset))
+                        geometry=deepcopy(conversion_packet) if conversion_packet else service.measure_dialogue(c.args['text'],width=width,dialogue_mode=mode)
+                        capacity=(geometry.get('region') or {}).get('capacity') or dialogue_capacity(font,settings,mode)
                         if max_lines is not None:capacity=min(capacity,max_lines)
                         standalone_fits=geometry['line_count']<=capacity and max(geometry['line_widths'],default=0)<=geometry['width'] and not geometry['ruby_overflow']
                         context_required=bool(c.args['selector'] or c.uid in retained_context)
                         geometry.update(capacity=capacity,standalone_fits=standalone_fits,fits=None if context_required else standalone_fits,
-                                        context_required=context_required,auto_edit=False)
-                        reason=', '.join(unsafe)+': text measured; automatic rewriting/pagination remains disabled.'
+                                        context_required=context_required,auto_edit=bool(conversion_packet and conversion_packet['changed']))
+                        reason=', '.join(unsafe)+': text measured; automatic wrapping/pagination remains disabled.'
+                        if conversion_packet:reason+=' Full-width conversion only; control tags, timing, glyph counts and existing breaks preserved.'
                         if parsed_geometry['markers'] and font.format.break_char in parsed_geometry['body']:reason+=' '+TIMED_BREAK_ERROR
                         if context_required:reason+=' Combined appended/inherited display also needs preceding route/buffer state.'
                         if geometry['contains_plain_newlines']:reason+=' LF/CR are not native line breaks in the existing script.'
-                        plan['issues'].append(dict(script_id=sid,command_id=c.uid,reason=reason,measurement=geometry));continue
-                    parsed=font.format.ordinary(native_newlines(c.args['text'],font.format))
+                        plan['issues'].append(dict(script_id=sid,command_id=c.uid,reason=reason,measurement=geometry))
+                        if not conversion_packet or not conversion_packet['changed']:continue
+                    else:
+                        source=native_newlines(c.args['text'],font.format)
+                        parsed=font.format.ordinary(reflow_breaks(source,font.format) if reflow else source)
                 args=deepcopy(c.args);details=[]
                 for key,value in fields:
-                    packet=service.wrap(c.opcode,value,field=key,width=width if supports_breaks(c.opcode) else label_width,dialogue_mode=mode,hyphenate=hyphenate,full_width_latin=full_width_latin,preserve_speaker=bool(asset))
+                    if c.opcode==0x3f2 and field_path(key)[1]==0:continue  # Timeout text has no rendered control.
+                    try:
+                        packet=conversion_packet or service.wrap(c.opcode,value,field=key,width=width if supports_breaks(c.opcode) else label_width,dialogue_mode=mode,hyphenate=hyphenate,full_width_latin=convert_width,preserve_speaker=bool(asset),reflow=reflow)
+                    except (ValueError,KeyError,IndexError,OverflowError) as error:
+                        plan['issues'].append(dict(script_id=sid,command_id=c.uid,field=key,reason=str(error)));continue
                     put(args,field_path(key),packet['text']);details.append(dict(field=key,**packet))
+                if not details:continue
                 pages=[args];capacity=None;warnings=[]
                 if asset:warnings.append('Asset-only proportional dialogue font: Font.gsf is saved/exported with this project. Existing Japanese glyphs are retained; ASCII word spaces become shorter globally. Speaker/simple UI strings still use fixed cursor spacing.')
-                if full_width_latin:
+                if any(d.get('font_style') and d['font_style']['changed'] for d in details):
+                    warnings.append('Fixed-cursor label aliases restored to ordinary Latin. Native cursor spacing remains fixed.')
+                if convert_width:
                     conversions=[p['full_width_conversion'] for p in details]
                     count=sum(p['converted_characters'] for p in conversions)
                     kept=''.join(sorted(set(''.join(p['preserved_ascii'] for p in conversions))))
                     warnings.append(f'Full-width Latin: {count} display characters converted before fitting; ordinary spaces and controls unchanged.'
                                     +(f' Preserved ASCII with no safe full-width replacement: {kept!r}.' if kept else ''))
                 if c.opcode in {0x3f2,0x3f8}:
-                    for packet in details:
-                        if c.opcode==0x3f8:top=settings['approach']['result_origin'][1]
-                        else:
-                            ordinal=field_path(packet['field'])[1]
-                            if ordinal==0:continue  # Native timeout route has no visible row.
-                            env=settings['battle'];top=env['choice_positions'][ordinal-1][1]+env['choice_offsets'][1 if packet['line_count']==1 else 0][1]
-                        size=int(font.utility*packet['scale']);leading=int(font.height*packet['scale']+font.leading)
-                        if top<0 or top+(packet['line_count']-1)*leading+size>544:
-                            raise ValueError('Choice/result text extends off-screen; shorten it manually. Duplicating this opcode would repeat branch/state logic.')
-                    warnings.append('Horizontal wrapping checked; review the native choice/result box height. These branch opcodes are not paginated.')
+                    warnings.append('Choice/result bounds checked. Branch opcodes are not paginated.')
                 if c.opcode==0x64:
-                    capacity=dialogue_capacity(font,settings,mode)
+                    capacity=(details[0].get('region') or {}).get('capacity') or dialogue_capacity(font,settings,mode)
                     if max_lines is not None:capacity=min(capacity,max_lines)
-                    if details[0]['line_count']>capacity:
+                    if unsafe:warnings.append('Conversion only. '+reason)
+                    if timed and not unsafe and details[0]['line_count']>capacity and not details[0].get('wrapping_skipped'):
+                        packet=service.convert_dialogue_width(c.args['text'],width=width,dialogue_mode=mode,preserve_speaker=bool(asset),convert=convert_width)
+                        packet['fit_warning']=f'Timed text needs {details[0]["line_count"]} lines; this box fits {capacity}. Shorten it to fit one message.'
+                        details=[dict(field='text',**packet)];args['text']=packet['text'];pages=[args]
+                    if details[0].get('fit_warning'):
+                        measurement=deepcopy(details[0]);standalone=measurement['line_count']<=capacity and max(measurement['line_widths'],default=0)<=measurement['width'] and not measurement.get('ruby_overflow')
+                        measurement.update(capacity=capacity,standalone_fits=standalone,fits=standalone,context_required=False,auto_edit=args!=c.args)
+                        reason='Timed SP QUE dialogue: '+details[0]['fit_warning']+' Conversion only; review the measured text.'
+                        plan['issues'].append(dict(script_id=sid,command_id=c.uid,reason=reason,measurement=measurement));warnings.append(reason)
+                    if not unsafe and not details[0].get('wrapping_skipped') and details[0]['line_count']>capacity:
+                        if timed or c.args['route'] or c.args['completion']:
+                            raise ValueError(f'Text needs {details[0]["line_count"]} lines; this box fits {capacity}. Timed/queued/append dialogue cannot be paginated safely; shorten it.')
                         if not paginate:raise ValueError(f"Dialogue needs {details[0]['line_count']} lines; box fits {capacity}. Enable pagination.")
                         packets=split_pages(service,args['text'],mode,details[0]['width'],capacity,hyphenate);pages=[]
                         for i,packet in enumerate(packets):
@@ -219,21 +235,32 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
                         details=packets
                         if args['voice']>=0:warnings.append('Voice stays on page1; continuation pages are silent. Original audio is not split.')
                         if parsed['keywords']:warnings.append('Keyword flags publish as their new pages complete; pagination adds advance/backlog boundaries.')
+                    if timed and details[0].get('break_strategy')=='spaces':
+                        warnings.append('Timed text uses spaces to trigger native wrapping. Queue tags/times are preserved; cue character indices follow the inserted spaces.')
                 if len(pages)>1 or args!=c.args:
                     plan['changes'].append(dict(script_id=sid,command_id=c.uid,opcode=c.opcode,before_texts=dict(text_fields(dict(opcode=c.opcode,args=c.args))),
                         after_texts=[dict(text_fields(dict(opcode=c.opcode,args=p))) for p in pages],pages=pages,details=details,
                         page_count=len(pages),capacity=capacity,dialogue_mode=mode,warnings=warnings))
             except (ValueError,KeyError,IndexError,OverflowError) as error:
                 plan['issues'].append(dict(script_id=sid,command_id=c.uid,reason=str(error)))
-    plan['summary']=dict(scanned=plan['scanned'],eligible=plan['eligible'],changed_commands=len(plan['changes']),
-                         inserted_commands=sum(c['page_count']-1 for c in plan['changes']),reported=len(plan['issues']))
+    if include_ui and project.ui_text_assets:
+        from .uifitting import analyze_ui
+        plan['ui_changes'],ui_issues,plan['ui_checks']=analyze_ui(project,font,asset,reflow=reflow,hyphenate=hyphenate,skip_japanese=skip_japanese)
+        plan['issues'].extend(ui_issues)
+    else:plan['ui_checks']=[]
+    plan['summary']=dict(scanned=plan['scanned'],eligible=plan['eligible'],changed_commands=len(plan['changes']),changed_ui_fields=len(plan['ui_changes']),
+                         inserted_commands=sum(c['page_count']-1 for c in plan['changes']),reported=len(plan['issues']),ui_font_only=ui_font_only,
+                         checked_ui_fields=sum(c.get('fit_policy')!='retained' for c in plan.get('ui_checks',[])),
+                         retained_ui_fields=sum(c.get('fit_policy')=='retained' for c in plan.get('ui_checks',[])))
     return plan
 
 
 def public_plan(plan,start=0,limit=30):
     result=deepcopy({**{k:v for k,v in plan.items() if k!='font_asset'},'changes':[{k:v for k,v in c.items() if k!='pages'} for c in plan['changes'][start:start+limit]],
         'issues':plan['issues'][start:start+limit],
-        'next_start':start+limit if start+limit<max(len(plan['changes']),len(plan['issues'])) else None})
+        'ui_changes':plan.get('ui_changes',[])[start:start+limit],
+        'ui_checks':plan.get('ui_checks',[])[start:start+limit],
+        'next_start':start+limit if start+limit<max(len(plan['changes']),len(plan['issues']),len(plan.get('ui_changes',[])),len(plan.get('ui_checks',[]))) else None})
     if plan.get('font_asset'):result['font_asset']={k:v for k,v in plan['font_asset']['manifest'].items() if k!='glyphs'}
     return result
 
@@ -241,14 +268,24 @@ def public_plan(plan,start=0,limit=30):
 def apply_cleanup(project,plan,command_ids=None):
     if project.revision!=plan['revision']:raise ValueError('Stale cleanup plan; analyze the current project again. Nothing applied.')
     changes={c['command_id']:c for c in plan['changes']}
-    wanted=set(changes) if command_ids is None else set(command_ids)
-    if wanted-set(changes):raise ValueError('Selected command is not in this cleanup plan')
+    ui_changes={c['field_id']:c for c in plan.get('ui_changes',[])}
+    available=set(changes)|set(ui_changes)
+    wanted=available if command_ids is None else set(command_ids)
+    if wanted-available:raise ValueError('Selected item is not in this cleanup plan')
+    for key in wanted&ui_changes.keys():
+        for contract in ui_changes[key].get('contracts',[]):
+            if contract['kind']=='composed_dialog':
+                dependencies=set(contract['members'])&ui_changes.keys()
+                if dependencies-wanted:raise ValueError('Keep both composed storage-message fragment proposals checked; nothing applied')
     font_changed=plan.get('font_asset',project.font_asset)!=project.font_asset
     if not wanted and not font_changed:return dict(revision=project.revision,changes=[],inserted_commands=0,font_changed=False)
     from .document import Command
     candidate=copy(project);candidate.scripts=project.scripts.copy();candidate.preview_issues=[]
     candidate.font_asset=plan.get('font_asset',project.font_asset)
-    affected={changes[uid]['script_id'] for uid in wanted};result=[];inserted=0
+    candidate.undo_stack=[];candidate.redo_stack=[]
+    selected_ui=[ui_changes[key] for key in ui_changes if key in wanted]
+    if selected_ui:candidate.set_ui_texts([(c['field_id'],c['before_text'],c['after_text']) for c in selected_ui])
+    affected={changes[uid]['script_id'] for uid in wanted if uid in changes};result=[];inserted=0
     for sid in affected:
         rows=[]
         for old in project.scripts[sid].commands:
@@ -263,7 +300,9 @@ def apply_cleanup(project,plan,command_ids=None):
         candidate.scripts[sid]=replace(project.scripts[sid],commands=rows)
     issues=candidate.validate()
     if issues:raise ValueError(f'Cleanup rejected without changes: file{issues[0].script}/{issues[0].command}: {issues[0].message}')
-    before=project.scripts.copy();before_font=project.font_asset;project.scripts=candidate.scripts;project.font_asset=candidate.font_asset
-    project.undo_stack.append(('Auto-fit translated text',before,project.scripts.copy(),before_font,project.font_asset));project.redo_stack=[]
+    before=project.scripts.copy();before_font=project.font_asset;before_ui=project.ui_text_assets
+    project.scripts=candidate.scripts;project.font_asset=candidate.font_asset;project.ui_text_assets=candidate.ui_text_assets
+    project.remember(('Auto-fit translated text',before,project.scripts.copy(),before_font,project.font_asset,
+                      project.texture_assets,project.texture_assets,before_ui,project.ui_text_assets));project.redo_stack=[]
     project.touched.update(affected);project.preview_issues=[];project.revision=uuid.uuid4().hex
-    return dict(revision=project.revision,changes=result,inserted_commands=inserted,valid=True,font_changed=font_changed)
+    return dict(revision=project.revision,changes=result,ui_fields=[c['field_id'] for c in selected_ui],inserted_commands=inserted,valid=True,font_changed=font_changed)

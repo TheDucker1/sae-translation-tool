@@ -4,11 +4,14 @@ Only seven text payloads are authored. Other payloads stay byte-identical except
 known command-index operands. Metadata/post words follow command identity.
 """
 import struct
+from contextvars import ContextVar
 from dataclasses import dataclass
 from .engine import TEXT_OPS
 
 
 class CodecError(ValueError):pass
+
+STRING_OBSERVER=ContextVar('counted_string_observer',default=None)
 
 
 class Reader:
@@ -17,7 +20,13 @@ class Reader:
         if n<0 or self.pos+n>len(self.data):raise CodecError('Truncated script data')
         out=self.data[self.pos:self.pos+n];self.pos+=n;return out
     def word(self,fmt='I'):return struct.unpack('<'+fmt,self.take(struct.calcsize(fmt)))[0]
-    def string(self):return self.take(self.word()*2).decode('utf-16-le',errors='strict')
+    def string(self):
+        start=self.pos;value=self.take(self.word()*2).decode('utf-16-le',errors='strict')
+        observer=STRING_OBSERVER.get()
+        if observer:
+            observed=observer(self,start,self.pos,value)
+            if observed is not None:value=observed
+        return value
     def count(self):
         n=self.word()
         if n>len(self.data)-self.pos:raise CodecError('Count exceeds remaining data')

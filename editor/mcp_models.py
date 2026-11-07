@@ -5,6 +5,7 @@ from pydantic import BaseModel,ConfigDict,Field
 Id=Annotated[str,Field(min_length=1,max_length=128)]
 Index=Annotated[int,Field(ge=0,strict=True)]
 Limit=Annotated[int,Field(ge=1,le=100,strict=True)]
+PixelRect=Annotated[list[Annotated[int,Field(ge=0,strict=True)]],Field(min_length=4,max_length=4)]
 
 
 class StrictModel(BaseModel):model_config=ConfigDict(extra='forbid',strict=True)
@@ -19,7 +20,14 @@ class TranslationEdit(StrictModel):
     wrap_words:bool=False
     full_width_latin:bool=False
     layout_width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None
-    dialogue_mode:Literal['ordinary','battle']='ordinary'
+    dialogue_mode:Literal['auto','ordinary','battle']='auto'
+    reflow:bool=False
+
+
+class UiTextEdit(StrictModel):
+    field_id:Id
+    expected_text:Annotated[str,Field(max_length=65536)]
+    translation:Annotated[str,Field(max_length=8192)]
 
 
 class CommandEdit(StrictModel):

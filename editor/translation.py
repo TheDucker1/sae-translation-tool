@@ -19,10 +19,11 @@ from .opcodes import CATALOG,markdown
 from .templates import template
 from .runtime import Session
 from .gameexport import export_game
-from .mcp_models import TranslationEdit,CommandEdit,PreviewInput,BankEdit,Id,Index,Limit
+from .mcp_models import TranslationEdit,CommandEdit,PreviewInput,BankEdit,Id,Index,Limit,PixelRect
 from .dialogueview import project_flow,transcript,readable
-from .textlayout import TextLayoutService,native_field
+from .textlayout import TextLayoutService,native_field,supports_breaks
 from .fontpatch import effective_font
+from .mcp_models import UiTextEdit
 
 GUIDE=(ROOT/'docs/TRANSLATOR_GUIDE.md').read_text(encoding='utf-8')
 
@@ -119,7 +120,7 @@ class TranslationWorkspace:
     def commit(self,candidate,label):
         issues=self.diagnostics(candidate)
         if issues:raise ValueError('Batch rejected without changes: '+json.dumps([asdict(d) for d in issues[:12]],ensure_ascii=False))
-        p=self.project;p.undo_stack.append((label,p.scripts.copy(),candidate.scripts.copy()));p.redo_stack=[]
+        p=self.project;p.remember((label,p.scripts.copy(),candidate.scripts.copy()));p.redo_stack=[]
         p.scripts=candidate.scripts;p.touched=candidate.touched;p.preview_issues=[];p.revision=uuid.uuid4().hex
         self._cache={};self._preview_revision=None
         self._cache[('validation',p.revision)]=[]
@@ -185,6 +186,9 @@ class TranslationWorkspace:
                     for name,value in fields(c).items():total+=1;modified+=old.get(name)!=value
             self._cache[key]=dict(scripts=len(self.project.scripts),text_fields=total,modified_text_fields=modified)
         return dict(revision=self.project.revision,unsaved=self.project.saved_revision!=self.project.revision,
+                    ui_metadata_issues=self.project.ui_metadata_issues(),
+                    texture_replacement_count=len(getattr(self.project,'texture_assets',{})),
+                    ui_text_replacement_count=len(getattr(self.project,'ui_text_assets',{})),
                     font_asset={k:self.project.font_asset['manifest'].get(k) for k in ('format','font_sha256','source_sha256','generator_revision')} if self.project.font_asset else None,
                     project_file=self.project_file,profile=deepcopy(self.profile),context_revision=self.context_revision(),**self._cache[key],
                     preview_current=self._preview_revision==self.project.revision,
@@ -196,6 +200,180 @@ class TranslationWorkspace:
         scripts=[s for s in self.project.scripts.values() if query.casefold() in s.name.casefold()]
         rows=[dict(id=s.id,name=s.name.strip(' \0'),commands=len(s.commands),text_commands=sum(c.opcode in TEXT_OPS for c in s.commands),has_edit_history=s.id in self.project.touched) for s in scripts[start:start+limit]]
         return dict(revision=self.project.revision,scripts=rows,next_start=start+limit if start+limit<len(scripts) else None)
+
+    @locked
+    def list_ui_text(self,query:Annotated[str,Field(max_length=200)]='',category:Annotated[str,Field(max_length=100)]='',
+                     source:Annotated[str,Field(max_length=240)]='',include_protected:bool=False,start:Index=0,limit:Limit=30)->dict[str,Any]:
+        """Discover non-script labels/prompts/settings/help/keyword/catalogue text, all languages. Page stable field IDs and original/current text. Protected syntax/resource names are optional; coverage/issues reported."""
+        from .uitext import get_catalog
+        c=get_catalog(self.project);rows=[];needle=query.casefold()
+        for key,f in c.fields.items():
+            current=self.project.ui_text_assets.get(key,{}).get('text',f['original'])
+            if not include_protected and not f['editable']:continue
+            if category and category!=f['category'] or source and source!=f['source']:continue
+            if needle not in ' '.join((key,f['category'],f['role'],f['renderer'],f['fit_policy'],f['original'],current)).casefold():continue
+            rows.append(dict(f,current=current,modified=key in self.project.ui_text_assets))
+        return dict(revision=self.project.revision,fields=rows[start:start+limit],total=len(rows),next_start=start+limit if start+limit<len(rows) else None,
+            categories=sorted({f['category'] for f in c.fields.values()}),inventory=c.summary())
+
+    @locked
+    def get_ui_text(self,field_id:Id)->dict[str,Any]:
+        """Read UI text field encoding/location/tokens/restrictions and neighboring strings for translation context."""
+        from .uitext import get_catalog
+        c=get_catalog(self.project)
+        if field_id not in c.fields:raise ValueError('Unknown UI text field_id; call list_ui_text')
+        f=c.fields[field_id];node=c.nodes[f['node_id']]
+        neighbors=[dict(row,current=self.project.ui_text_assets.get(key,{}).get('text',row['original'])) for key,row in c.fields.items()
+            if row['node_id']==f['node_id'] and abs(row['index']-f['index'])<=2]
+        return dict(revision=self.project.revision,field=dict(f,current=self.project.ui_text_assets.get(field_id,{}).get('text',f['original'])),
+            source_sha256=c.sources[f['source']]['sha256'],member_sha256=node['sha256'],neighbors=neighbors)
+
+    @locked
+    def format_ui_text(self,field_id:Id,text:Annotated[str,Field(max_length=8192)]|None=None)->dict[str,Any]:
+        """Propose font aliases for an environment/catalogue field. Inspect renderer/note: measured layouts support proportional aliases, fixed cursors use ordinary ASCII, unverified consumers remain unchanged. Does not mutate. Apply through apply_ui_text."""
+        from .fontstyle import ui_proposal
+        from .uitext import get_catalog
+        catalog=get_catalog(self.project)
+        if field_id not in catalog.fields:raise ValueError('Unknown UI text field_id')
+        current=self.project.ui_text_assets.get(field_id,{}).get('text',catalog.fields[field_id]['original'])
+        return dict(revision=self.project.revision,expected_text=current,**ui_proposal(self.project,field_id,current if text is None else text,None))
+
+    @locked
+    def repair_ui_text_font(self,expected_revision:Id)->dict[str,Any]:
+        """Match existing translated environment/help/catalogue fields to their verified font consumers in one Undo. Preserves untouched originals and reports unverified consumers through list_ui_text. Use format_ui_text to review individual proposals first."""
+        from .fontstyle import translated_ui_edits,unverified_ui_fields
+        self.check_revision(expected_revision);edits=translated_ui_edits(self.project)
+        changed=bool(edits) and self.project.set_ui_texts(edits)
+        self._cache={};self._preview_revision=None
+        return dict(revision=self.project.revision,changed=bool(changed),applied_fields=[e[0] for e in edits],unverified_fields=unverified_ui_fields(self.project))
+
+    @locked
+    def apply_ui_text(self,edits:Annotated[list[UiTextEdit],Field(min_length=1,max_length=100)],expected_revision:Id)->dict[str,Any]:
+        """Atomically translate known UI fields with exact expected_text/revision. Preserve placeholders/control syntax, encoding and native table structure. Undo/save/scene preview/export share these changes."""
+        self.check_revision(expected_revision)
+        from .uitext import get_catalog
+        catalog=get_catalog(self.project)
+        rows=[UiTextEdit.model_validate(e) if isinstance(e,dict) else e for e in edits]
+        changed=self.project.set_ui_texts([(e.field_id,e.expected_text,e.translation) for e in rows]);self._cache={};self._preview_revision=None
+        return dict(revision=self.project.revision,changed=changed,applied_fields=[e.field_id for e in rows],
+                    applied_text=[dict(field_id=e.field_id,text=self.project.ui_text_assets.get(e.field_id,{}).get('text',catalog.fields[e.field_id]['original'])) for e in rows])
+
+    def visual_context(self,expected_catalog_revision=None):
+        from .visualcontext import VisualContext
+        if not hasattr(self,'_visual_context'):self._visual_context=VisualContext()
+        context=self._visual_context.bind(self);context.check_catalog(expected_catalog_revision)
+        return context
+
+    @locked
+    def list_textures(self,query:Annotated[str,Field(max_length=200)]='',category:Annotated[str,Field(max_length=100)]='',
+                      source:Annotated[str,Field(max_length=240)]='',start:Index=0,limit:Limit=30,
+                      expected_catalog_revision:Id|None=None)->dict[str,Any]:
+        """Discover/page original texture IDs, dimensions, formats and intended consumers. Exact category/source filters; query searches names/IDs/uses."""
+        return self.visual_context(expected_catalog_revision).textures(query,category,source,start,limit)
+
+    @locked
+    def get_texture(self,asset_id:Id,include_image:bool=True,region:PixelRect|None=None,
+                    max_size:Annotated[int,Field(ge=64,le=2048,strict=True)]=1024,
+                    expected_catalog_revision:Id|None=None,view:Literal['current','original']='current')->dict[str,Any]:
+        """Get current project pixels (default) or view=original, plus source provenance and replacement metadata. region=[x,y,w,h] is an in-bounds crop. PNG is a native MCP image block."""
+        return self.visual_context(expected_catalog_revision).texture(asset_id,include_image,region,max_size,view)
+
+    @locked
+    def import_texture_png(self,asset_id:Id,filename:Annotated[str,Field(min_length=1,max_length=240)],expected_revision:Id,
+                           expected_png_sha256:Id|None=None,expected_catalog_revision:Id|None=None)->dict[str,Any]:
+        """Import a same-size lossless <=8-bit PNG as a project replacement. Undo/revision guarded. Game export checks original GXT palette/alpha constraints separately; exact PNG retained."""
+        from .textureassets import read_png,sha,summary
+        self.check_revision(expected_revision);context=self.visual_context(expected_catalog_revision);data=read_png(self.path(filename))
+        if expected_png_sha256 is not None and sha(data)!=expected_png_sha256:raise ValueError('PNG file checksum changed; inspect the current file and retry')
+        previous=self.project.revision;changed=self.project.set_texture(asset_id,data,context.catalog)
+        self._cache={}
+        if self._preview_revision==previous:self._preview_revision=self.project.revision
+        return dict(revision=self.project.revision,asset_id=asset_id,changed=changed,replacement=summary(self.project.texture_assets[asset_id]),scope='project replacement; check_texture_export checks lossless game encoding before export_game_copy')
+
+    @locked
+    def check_texture_export(self,expected_revision:Id,asset_id:Id|None=None,start:Index=0,limit:Limit=30)->dict[str,Any]:
+        """Read-only actual GXT encoding preflight (no files written). Check one replacement or all; pages report rows. Original size/format retained, P8 <=256 RGBA colors, opaque stays opaque; no quantization."""
+        from .textureexport import prepare_textures
+        from .imagecodec import ImageError
+        self.check_revision(expected_revision)
+        records=self.project.texture_assets
+        if asset_id is not None:
+            if asset_id not in records:raise ValueError('No PNG replacement for this asset_id')
+            records={asset_id:records[asset_id]}
+        try:_,rows,_=prepare_textures(records,self.project.root)
+        except ImageError as error:return dict(revision=self.project.revision,valid=False,issues=[str(error)],files_written=False)
+        return dict(revision=self.project.revision,valid=True,issues=[],files_written=False,total=len(rows),
+            textures=rows[start:start+limit],next_start=start+limit if start+limit<len(rows) else None)
+
+    @locked
+    def remove_texture_replacement(self,asset_id:Id,expected_revision:Id)->dict[str,Any]:
+        """Revert one project texture to its original pixels as an Undo transaction. Original files and saved projects are untouched until Save."""
+        self.check_revision(expected_revision);previous=self.project.revision;self.project.remove_texture(asset_id);self._cache={}
+        if self._preview_revision==previous:self._preview_revision=self.project.revision
+        return dict(revision=self.project.revision,asset_id=asset_id,removed=True)
+
+    @locked
+    def write_texture_png(self,asset_id:Id,filename:Annotated[str,Field(min_length=1,max_length=240)],expected_revision:Id,
+                          view:Literal['current','original']='current')->dict[str,Any]:
+        """Write a separate new workspace-relative PNG for external image editing. Never overwrite files. Current replacement bytes are copied exactly; original GXT pixels are decoded losslessly. No project/game changes."""
+        from .textureassets import png_bytes,encode_png,write_png
+        self.check_revision(expected_revision);context=self.visual_context()
+        data=png_bytes(context.replacements[asset_id]) if view=='current' and asset_id in context.replacements else encode_png(context.catalog.decode(asset_id))
+        return dict(revision=self.project.revision,asset_id=asset_id,view=view,**write_png(self.path(filename),data,self.project.root))
+
+    @locked
+    def get_texture_usage(self,asset_id:Id,kind:Literal['atlas_regions','script_uses']='atlas_regions',
+                          start:Index=0,limit:Limit=30,expected_catalog_revision:Id|None=None)->dict[str,Any]:
+        """Page known atlas regions or literal original-script uses. Missing mappings do not imply unused assets; these are potential uses, not observed scene execution."""
+        return self.visual_context(expected_catalog_revision).usage(asset_id,kind,start,limit)
+
+    @locked
+    def list_ui_scenes(self)->dict[str,Any]:
+        """List supported static UI-scene families and coverage. Use describe_ui_scene for state fields/bounds, then get_ui_scene for image and layer/text data."""
+        from .composition import FAMILIES
+        from .visualcontext import COORDINATES,LIMITATIONS
+        return dict(project_revision=self.project.revision,families=[dict(family=key,name=name,coverage=coverage) for key,name,coverage in FAMILIES],
+                    coordinates=COORDINATES,limitations=LIMITATIONS)
+
+    @locked
+    def describe_ui_scene(self,family:Annotated[str,Field(min_length=1,max_length=40)],state:dict[str,Any]|None=None,
+                          expected_catalog_revision:Id|None=None)->dict[str,Any]:
+        """Discover this family's exact parameter names/defaults/types/choices and state-dependent bounds. Unknown or invalid supplied fields reject; no GUI/game state changes."""
+        return self.visual_context(expected_catalog_revision).describe(family,state)
+
+    @locked
+    def get_ui_scene(self,family:Annotated[str,Field(min_length=1,max_length=40)],state:dict[str,Any]|None=None,
+                     include_image:bool=True,max_size:Annotated[int,Field(ge=64,le=2048,strict=True)]=1024,
+                     limit:Limit=50,expected_catalog_revision:Id|None=None)->dict[str,Any]:
+        """Render a whole supported static UI scene with current project font and explicit preview state. Returns PNG image plus revision-bound scene_id, paged layers/text, source hashes and limits. Pass current translated text via state, not a guessed story position."""
+        return self.visual_context(expected_catalog_revision).scene(self,family,state,include_image,max_size,limit)
+
+    @locked
+    def get_ui_text_preview(self,field_id:Id,plan_id:Id|None=None,include_image:bool=True,
+                            max_size:Annotated[int,Field(ge=64,le=2048,strict=True)]=1024,limit:Limit=30)->dict[str,Any]:
+        """Preview a field's source-bound screen, optionally with an unapplied Auto-fit plan. Returns image plus layer/geometry data. No project mutation. Missing native context rejects explicitly; never invents a scene."""
+        from copy import copy
+        from collections import OrderedDict
+        import threading
+        from .uipreview import preview_snapshot
+        plan=None
+        if plan_id is not None:
+            plan=getattr(self,'_cleanup_plans',{}).get(plan_id)
+            if plan is None:raise ValueError('Unknown/expired cleanup plan; analyze again')
+        project,recipe,_,_=preview_snapshot(self.project,field_id,plan=plan)
+        base=self.visual_context();view=copy(self);view.project=project
+        context=copy(base);context.project_revision=None;context.scenes=OrderedDict();context.local=threading.local()
+        context.bind(view);result=context.scene(view,recipe['family'],recipe['state'],include_image,max_size,limit)
+        result.update(field_id=field_id,proposal_plan_id=plan_id,read_only_preview=True)
+        base.scenes.update(context.scenes)
+        while len(base.scenes)>8:base.scenes.popitem(last=False)
+        return result
+
+    @locked
+    def get_ui_scene_layers(self,scene_id:Id,start:Index=0,limit:Limit=30,include_glyphs:bool=False,
+                            kind:Literal['all','text','sprite','solid','target']='all')->dict[str,Any]:
+        """Page the exact scene snapshot: draw order/pass, texture/target/mask, crop/position/size/clip/rotation/color, and text/style. Optional glyphs provide codepoints/rectangles/colors. Stale/evicted snapshots reject."""
+        return self.visual_context().layers(scene_id,start,limit,include_glyphs,kind)
 
     @locked
     def list_commands(self,script_id:Index,start:Index=0,limit:Limit=30,text_only:bool=True,
@@ -313,12 +491,12 @@ class TranslationWorkspace:
     def format_text(self,script_id:Index,command_id:Id,field:Id,
                     text:Annotated[str,Field(max_length=131070)]|None=None,
                     width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
-                    dialogue_mode:Literal['ordinary','battle']='ordinary',full_width_latin:bool=False)->dict[str,Any]:
-        """Propose game-compatible word wrapping without editing. Optional full_width_latin converts supported visible ASCII before fitting, preserving controls/spaces. Timed SP QUE explicit breaks reject; single-line labels check screen positions. Choose dialogue mode explicitly."""
+                    dialogue_mode:Literal['auto','ordinary','battle']='auto',full_width_latin:bool=False,reflow:bool=False)->dict[str,Any]:
+        """Propose wrapping using automatic command/file layout. full_width_latin converts visible ASCII/ruby around intact tags. Timed SP QUE uses verified space padding, preserving directive times; unfit text reports fit_warning with conversion only. Bubble regions follow current fill textures. reflow replaces old breaks before fitting. Existing timed explicit breaks reject unless repaired by reflow. Omit dialogue_mode for automatic selection."""
         _,command=self.command(script_id,command_id);allowed=fields(command)
         if field not in allowed:raise ValueError('Field is not editable translation text')
         font=effective_font(self.project,self._runtime.text);profile=bool(self.project.font_asset)
-        result=TextLayoutService(font,self._runtime.settings).wrap(command.opcode,allowed[field] if text is None else text,field=field,width=width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin or profile and command.opcode in {0x64,0x3f2,0x3f8},preserve_speaker=profile)
+        result=TextLayoutService(font,self._runtime.settings,project=self.project,script_id=script_id,command=command).wrap(command.opcode,allowed[field] if text is None else text,field=field,width=width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin or profile and command.opcode in {0x64,0x3f2,0x3f8},preserve_speaker=profile,reflow=reflow)
         return dict(revision=self.project.revision,script_id=script_id,command_id=command_id,field=field,**result)
 
     @locked
@@ -327,12 +505,12 @@ class TranslationWorkspace:
             max_lines:Annotated[int,Field(ge=1,le=20,strict=True)]|None=None,
             width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
             label_width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
-            dialogue_mode:Literal['auto','ordinary','battle']='auto',limit:Limit=30,full_width_latin:bool=False,proportional_latin:bool=False)->dict[str,Any]:
-        """Analyze cleanup/page proposals. proportional_latin generates an asset-only Font.gsf with variable dialogue widths, aliases and matching fit, retained by Apply/save/Undo/export; names/simple UI remain fixed. full_width_latin alone only widens PVF text. Timed/queued/append restrictions remain. Omit script_id for whole project; review font_asset and text before Apply."""
+            dialogue_mode:Literal['auto','ordinary','battle']='auto',limit:Limit=30,full_width_latin:bool=False,proportional_latin:bool=False,reflow:bool=False,include_ui:bool=True)->dict[str,Any]:
+        """Unified Auto-fit for script text and translated environment/help fields. include_ui defaults true; ui_changes contains checked field proposals. proportional_latin generates/upgrades Font.gsf with proportional dialogue and readable fixed-cursor Latin bitmaps. Script layouts and bubble bounds are automatic; timed text uses verified spaces. reflow repairs old breaks. Review font, script/UI changes and issues before one atomic Apply."""
         from .textcleanup import analyze_cleanup,public_plan
         plan=analyze_cleanup(self.project,self._runtime.text,self._runtime.settings,
             script_ids=None if script_id is None else [script_id],command_ids=command_ids,skip_japanese=skip_japanese,
-            hyphenate=hyphenate,paginate=paginate,max_lines=max_lines,width=width,label_width=label_width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin,proportional_latin=proportional_latin)
+            hyphenate=hyphenate,paginate=paginate,max_lines=max_lines,width=width,label_width=label_width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin,proportional_latin=proportional_latin,reflow=reflow,include_ui=include_ui)
         plans=getattr(self,'_cleanup_plans',{});plans[plan['plan_id']]=plan
         while len(plans)>4:plans.pop(next(iter(plans)))
         self._cleanup_plans=plans;return public_plan(plan,limit=limit)
@@ -348,7 +526,7 @@ class TranslationWorkspace:
     @locked
     def apply_text_cleanup(self,plan_id:Id,expected_revision:Id,
                            command_ids:Annotated[list[Id],Field(max_length=1000)]|None=None)->dict[str,Any]:
-        """Apply cleanup text and a reviewed font_asset update atomically as one Undo transaction. font_changed can apply with no text changes. Omit command_ids for all text proposals; an empty list still applies a pending font update. Reject stale/invalid plans without edits."""
+        """Apply reviewed script, UI and font changes in one Undo transaction. command_ids may contain script command IDs and UI field_ids from ui_changes. Omit for all proposals; an empty list still applies a pending font update. Reject stale/invalid plans atomically."""
         from .textcleanup import apply_cleanup
         self.check_revision(expected_revision);plan=getattr(self,'_cleanup_plans',{}).get(plan_id)
         if plan is None:raise ValueError('Unknown/expired cleanup plan; analyze again')
@@ -368,8 +546,8 @@ class TranslationWorkspace:
             if old!=edit.expected_text:raise ValueError('Stale expected_text; read current context and retry')
             translated=native_field(c.opcode,edit.translation,self.project.text_format);layout=None
             profile=bool(self.project.font_asset) and c.opcode in {0x64,0x3f2,0x3f8}
-            if edit.wrap_words or edit.full_width_latin or profile:
-                layout=TextLayoutService(effective_font(self.project,self._runtime.text),self._runtime.settings).wrap(c.opcode,translated,field=edit.field,width=edit.layout_width,dialogue_mode=edit.dialogue_mode,full_width_latin=edit.full_width_latin or profile,preserve_speaker=profile);translated=layout['text']
+            if edit.wrap_words or edit.full_width_latin or edit.reflow or self.project.font_asset:
+                layout=TextLayoutService(effective_font(self.project,self._runtime.text),self._runtime.settings,project=self.project,script_id=edit.script_id,command=c).wrap(c.opcode,translated,field=edit.field,width=edit.layout_width,dialogue_mode=edit.dialogue_mode,full_width_latin=edit.full_width_latin or profile and supports_breaks(c.opcode),preserve_speaker=profile,reflow=edit.reflow);translated=layout['text']
             elif edit.layout_width is not None:raise ValueError('layout_width requires wrap_words=true or full_width_latin=true')
             if self.controls(old)!=self.controls(translated):raise ValueError('Text-only translation must preserve native control tokens and order')
             if old.partition('\0')[1:]!=translated.partition('\0')[1:]:raise ValueError('Do not introduce or alter NUL-terminated hidden text')
@@ -408,18 +586,22 @@ class TranslationWorkspace:
     def validate_project(self,limit:Limit=50)->dict[str,Any]:
         """Validate encoding/text controls, typed targets, branch structure and counts; this does not judge translation quality."""
         issues=self.diagnostics()
-        return dict(revision=self.project.revision,valid=not issues,issue_count=len(issues),issues=[asdict(d) for d in issues[:limit]])
+        metadata=self.project.ui_metadata_issues()
+        return dict(revision=self.project.revision,valid=not issues,export_ready=not issues and not metadata,
+                    ui_metadata_issues=metadata,issue_count=len(issues),issues=[asdict(d) for d in issues[:limit]])
 
     @locked
     def undo(self,expected_revision:Id)->dict[str,Any]:
         """Undo one accepted text/structural batch, keeping originals and on-disk projects untouched until Save."""
-        self.check_revision(expected_revision);self.project.undo();self._cache={};self._preview_revision=None
+        self.check_revision(expected_revision);key=self.project.scenario_key();current=self._preview_revision==self.project.revision
+        self.project.undo();self._cache={};self._preview_revision=self.project.revision if current and key==self.project.scenario_key() else None
         return dict(revision=self.project.revision,can_undo=bool(self.project.undo_stack),can_redo=bool(self.project.redo_stack))
 
     @locked
     def redo(self,expected_revision:Id)->dict[str,Any]:
         """Redo one previously undone batch; never silently reapply a stale revision."""
-        self.check_revision(expected_revision);self.project.redo();self._cache={};self._preview_revision=None
+        self.check_revision(expected_revision);key=self.project.scenario_key();current=self._preview_revision==self.project.revision
+        self.project.redo();self._cache={};self._preview_revision=self.project.revision if current and key==self.project.scenario_key() else None
         return dict(revision=self.project.revision,can_undo=bool(self.project.undo_stack),can_redo=bool(self.project.redo_stack))
 
     def check_disk(self,path):
@@ -467,7 +649,7 @@ class TranslationWorkspace:
         self.check_revision(expected_revision);target=self.path(folder)
         if self.workspace.is_relative_to(target):raise ValueError('Export must be below the workspace root')
         result=export_game(self.project,target)
-        return dict(revision=self.project.revision,path=result['path'],changed_scripts=result['changed_scripts'],requires_fresh_progress=result['requires_fresh_progress'])
+        return dict(revision=self.project.revision,path=result['path'],changed_scripts=result['changed_scripts'],changed_textures=result['changed_textures'],changed_ui_text=result['changed_ui_text'],textures=result['textures'],requires_fresh_progress=result['requires_fresh_progress'])
 
     def require_preview(self):
         if self._preview_revision!=self.project.revision:raise ValueError('Preview is absent/stale after edits; call preview_start')
