@@ -58,7 +58,15 @@ Apply can update only the font even when no script text changes. Save/export a
 new copy afterward. Uncheck the option and reanalyze to keep the embedded older
 font; use Undo to reverse an applied change.
 
-Generator revision2 tightened apostrophe masks; revision3 adds readable UI bitmaps.
+Generator revision2 tightened apostrophe masks; revision3 added readable UI bitmaps.
+Revision4 recalculates dialogue advances from actual draw size and native double
+truncation, targeting about one pixel of clearance at the authored default size.
+The previous padding added too much tracking on top of the engine's implicit
+cached-glyph pixel. Measured text also selects supported narrow quote glyphs for
+ASCII apostrophes/double quotes, including contractions. UI bitmaps are preserved.
+Run Auto-fit with the font option checked to review the revision4 upgrade. Enable
+Reflow existing line breaks to repack older wrapping if desired, then Apply/Save
+and export a new copy. Explicit authored breaks remain hard by default.
 It preserves literal spaces in the script; it does not guess which spaces the
 translator intended or introduce pair-specific kerning.
 

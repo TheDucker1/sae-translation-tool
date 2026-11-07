@@ -42,12 +42,14 @@ def fixed_latin(value,font=None):
 def match_style(value,font,renderer):
     """Keep placeholders, embedded tags, UI icons and hidden suffixes opaque."""
     from .textlayout import full_width_text
+    if renderer==LAYOUT:
+        text=full_width_text(value,font,preserve_format=True)['text']
+        return dict(text=text,changed=text!=value,renderer=renderer,note=NOTES[LAYOUT])
     visible,separator,hidden=value.partition('\0')
     pattern=r'《[^》]*》|≪[^≫]*≫|[①-⑳]|'+PRINTF.pattern
     parts=re.split('('+pattern+')',visible)
     for i in range(0,len(parts),2):
         if renderer==FIXED:parts[i]=fixed_latin(parts[i],font)
-        elif renderer==LAYOUT:parts[i]=full_width_text(parts[i],font)['text']
     text=''.join(parts)+separator+hidden
     note=NOTES.get(renderer,'Protected syntax is retained.')
     if renderer==FIXED and font is not None and 'A' not in font.cached:

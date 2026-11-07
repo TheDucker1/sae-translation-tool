@@ -41,6 +41,8 @@ Auto-fit layout checks distinguish all seven text consumers across files,
 fixed label advances, native space padding, curved fill masks and explicit reflow.
 Font-style checks distinguish fixed-cursor labels from measured text, preserve
 syntax/hidden data and check existing UI repair, typed serialization and Undo.
+They also catch native advance double-truncation and quote conversion around
+timed cues, printf operands and protected UI controls.
 Unified Auto-fit checks cover combined script/UI Apply and Undo, checked UI-only
 selection, stale plans and rejection of invalid UI text before any batch commit.
 

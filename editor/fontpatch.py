@@ -3,7 +3,20 @@ import argparse,hashlib,json,math,struct
 from pathlib import Path
 from .text import TextPresentation,font_atlas
 
-GENERATOR_REVISION=3
+GENERATOR_REVISION=4
+
+
+def dialogue_width(ink_width,font,gap):
+    """Record width whose native advance clears drawn ink by the requested gap."""
+    pixels=int(font.utility*font.scale)
+    if pixels<=0 or font.scale<=0:raise ValueError('Invalid dialogue font scale')
+    target=math.ceil(ink_width*pixels/font.bitmap_height)+gap
+    # Measurement first scales a nominal36 record at utility size and adds1,
+    # then layout truncates after body scaling. Drawing instead uses bitmap24.
+    for width in range(max(1,math.ceil(ink_width)),256):
+        advance=int(int(1+width*font.utility/36)*font.scale)
+        if advance>=target:return width
+    raise ValueError('Dialogue glyph advance exceeds the GSF record width')
 
 
 def sections(data):
@@ -64,7 +77,7 @@ def build(root):
         # Tighten ink and outgoing advance without touching script spaces.
         single_quote=c in "'‘’";quote=c in "'\"‘’“”"
         ink_width=min(ink,11) if fixed else min(ink,3) if single_quote else ink
-        width=nominal if fixed else max(1,math.ceil((ink_width+(0 if quote else 2))*nominal/height))
+        width=nominal if fixed else dialogue_width(ink_width,font,0 if quote else 1)
         padding=(12-ink_width)/2 if fixed else 0
         glyphs.append(dict(character=ord(alias),source=c,index=ids[0],left=left,width=width,
                            ink_scale=ink_width/ink,padding=padding,fixed=fixed))
@@ -97,6 +110,7 @@ def build(root):
         nominal=nominal,bitmap_height=height,glyphs=report,
         scope='Proportional dialogue aliases and readable fixed-cursor Latin bitmap cells from the same font face.',
         ui_bitmap_cells=True,ui_cell_ink_width=11,
+        dialogue_spacing='native_scaled_ink_plus_gap',dialogue_gap_pixels=1,
         limitations=['Simple DrawString names/UI still use fixed cursor advances.',
                     'Use matching patched font metrics when rewrapping scripts.',
                     'ASCII spaces become shorter globally; Japanese glyph records and atlases are unchanged.',

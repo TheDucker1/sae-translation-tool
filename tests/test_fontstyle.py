@@ -5,7 +5,9 @@ import unittest
 
 from editor.engine import ROOT
 from editor.fontstyle import FIXED,LAYOUT,match_style,translated_ui_edits
-from editor.textlayout import TextLayoutService
+from editor.textlayout import TextLayoutService,full_width_text
+from editor.fontpatch import dialogue_width
+from types import SimpleNamespace
 from editor.uitext import get_catalog,prepare
 from editor.uitextcodec import counted_spans,help_text
 from test_ui_text import fixture
@@ -14,6 +16,21 @@ from test_autofit_layouts import settings_fixture
 
 
 class FontStyleChecks(unittest.TestCase):
+    def test_dialogue_advance_accounts_for_native_double_truncation(self):
+        font=SimpleNamespace(utility=27,scale=.9200000166893005,bitmap_height=24)
+        self.assertEqual(dialogue_width(11,font,1),18)
+        self.assertEqual(dialogue_width(3,font,0),4)
+
+    def test_measured_quotes_keep_cues_and_format_operands(self):
+        font=font_fixture();font.cached.update({c:(0,0,0,4,24) for c in '‘’“”'})
+        text='A「If you don\'t《SP QUE,1,2700》 press "Start".」'
+        result=full_width_text(text,font,preserve_speaker=True)['text']
+        self.assertIn('ｄｏｎ’ｔ《SP QUE,1,2700》',result)
+        self.assertIn('“Ｓｔａｒｔ”',result)
+        self.assertEqual(font.format.ordinary(text)['markers'],font.format.ordinary(result)['markers'])
+        proposal=match_style('Load "%ls"?',font,LAYOUT)
+        self.assertEqual(proposal['text'],'Ｌｏａｄ “%ls”？')
+
     def test_fixed_and_measured_styles_preserve_native_syntax(self):
         font=font_fixture()
         value='Ｓｋｉｐ ｔｈｅ tutorial %02d ≪UNCHANGED≫＿① 日本語\0hidden_ASCII'

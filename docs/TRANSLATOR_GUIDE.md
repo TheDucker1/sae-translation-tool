@@ -155,6 +155,10 @@ ordinary ASCII automatically rather than using proportional full-width aliases.
 Run Auto-fit again to repair labels from older projects. For non-script labels,
 Auto-fit includes translated environment/help/catalogue text by default. Font
 revision3 adds readable fixed-cursor bitmap letters from the dialogue font face.
+Revision4 reduces excess dialogue tracking using native scaling/rounding and
+selects proportional quote glyphs in measured text. Review the font upgrade in
+Auto-fit. Existing line breaks need explicit reflow to change; row geometry stays
+authored. Pair kerning and complex shaping are outside this asset path.
 Review `ui_changes` with script/font proposals and Apply once; Undo restores all
 three. `include_ui=false` explicitly limits the batch to script/font work.
 UI text… retains Match font in draft for individual edits. MCP exposes

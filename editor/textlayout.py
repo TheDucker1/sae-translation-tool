@@ -64,28 +64,41 @@ def is_text_field(opcode,path):
     return bool(re.fullmatch(patterns.get(opcode,r'(?!)'),name))
 
 
-def full_width_text(value,font,*,controls=True,preserve_speaker=False):
+def full_width_text(value,font,*,controls=True,preserve_speaker=False,preserve_format=False):
     """Convert display text, never commands or the reserved native break marker."""
     f=font.format;opening,closing=f.tokens[0][0],f.tokens[1][0]
-    result=[];converted=0;preserved=set();i=0;available=font.charset|font.cached.keys()
+    result=[];converted=0;preserved=set();i=0;available=font.charset|font.cached.keys();previous='';double_open=False
+    from .uitextcodec import PRINTF
     speaker_end=value.find(f.following[1]) if preserve_speaker else 0
     if speaker_end>0:result.append(value[:speaker_end]);i=speaker_end
     while i<len(value):
         c=value[i]
         if c=='\0':result.append(value[i:]);break  # Hidden suffix is opaque.
+        if preserve_format and c=='%':
+            token=PRINTF.match(value,i)
+            if token:result.append(token[0]);i=token.end();previous='x';continue
+        if preserve_format and c=='≪':
+            end=value.find('≫',i+1)
+            if end<0:raise ValueError('Unterminated UI control')
+            result.append(value[i:end+1]);i=end+1;continue
         if controls and c==opening:
             end=value.find(closing,i+1)
             if end<0:raise ValueError('Unterminated text control')
             result.append(value[i:end+1]);i=end+1;continue
         if '!'<=c<='~':
             candidate=chr(ord(c)+0xfee0)
+            if c in "'\"":
+                quote=('”' if double_open else '“') if c=='"' else ('’' if previous.isalnum() or previous in '.,!?)]}」』' else '‘')
+                if quote in font.cached:candidate=quote
+                if c=='"':double_open=not double_open
             try:encodable=candidate.encode('cp932').decode('cp932')==candidate
             except UnicodeError:encodable=False
             if (candidate!=f.break_char and candidate in available
                     and f.normalize(candidate)==candidate and encodable):
                 c=candidate;converted+=1
             else:preserved.add(c)
-        result.append(c);i+=1
+        if c in '“”':double_open=c=='“'
+        result.append(c);previous=c;i+=1
     return dict(text=''.join(result),converted_characters=converted,preserved_ascii=''.join(sorted(preserved)))
 
 
