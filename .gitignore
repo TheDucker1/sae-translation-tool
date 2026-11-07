@@ -46,6 +46,7 @@ Thumbs.db
 !/tests/test_texture_export.py
 !/tests/test_ui_text.py
 !/tests/test_pvf_preview.py
+!/tests/test_width_controls.py
 
 # Original/extracted game assets, native evidence and generated translations.
 GAMEFILE/

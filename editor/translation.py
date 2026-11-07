@@ -448,7 +448,7 @@ class TranslationWorkspace:
                     text:Annotated[str,Field(max_length=131070)]|None=None,
                     width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
                     dialogue_mode:Literal['ordinary','battle']='ordinary',full_width_latin:bool=False)->dict[str,Any]:
-        """Propose game-compatible word wrapping without editing. Optional full_width_latin converts supported visible ASCII before fitting, preserving controls/spaces. Timed SP QUE explicit breaks reject; single-line labels check screen positions. Choose dialogue mode explicitly."""
+        """Propose game-compatible word wrapping without editing. full_width_latin converts supported visible ASCII/ruby, preserving controls/spaces. Timed SP QUE gets conversion only with wrapping_skipped, measured overflow and unchanged timing; explicit breaks reject. Single-line labels check screen positions. Choose dialogue mode explicitly."""
         _,command=self.command(script_id,command_id);allowed=fields(command)
         if field not in allowed:raise ValueError('Field is not editable translation text')
         font=effective_font(self.project,self._runtime.text);profile=bool(self.project.font_asset)
@@ -462,7 +462,7 @@ class TranslationWorkspace:
             width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
             label_width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
             dialogue_mode:Literal['auto','ordinary','battle']='auto',limit:Limit=30,full_width_latin:bool=False,proportional_latin:bool=False)->dict[str,Any]:
-        """Analyze cleanup/page proposals. proportional_latin generates an asset-only Font.gsf with variable dialogue widths, aliases and matching fit, retained by Apply/save/Undo/export; names/simple UI remain fixed. full_width_latin alone only widens PVF text. Timed/queued/append restrictions remain. Omit script_id for whole project; review font_asset and text before Apply."""
+        """Analyze cleanup/page proposals. proportional_latin generates an asset-only Font.gsf with variable dialogue widths, retained by Apply/save/Undo/export; names/simple UI remain fixed. full_width_latin converts visible text/ruby around intact controls. Timed/queued/append text gets conversion only, no reflow or timing changes; review measured overflow/context issues. Omit script_id for whole project; review font_asset and text before Apply."""
         from .textcleanup import analyze_cleanup,public_plan
         plan=analyze_cleanup(self.project,self._runtime.text,self._runtime.settings,
             script_ids=None if script_id is None else [script_id],command_ids=command_ids,skip_japanese=skip_japanese,

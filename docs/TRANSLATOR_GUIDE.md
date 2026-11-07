@@ -73,7 +73,8 @@ text, readable lines and widths. Or set wrap_words=true in an apply_translations
 edit; optional layout_width is in game pixels. dialogue_mode='ordinary' is the
 default; choose 'battle' for battle dialogue. Existing hard breaks/controls/ruby
 are preserved. Timed SP QUE dialogue with explicit breaks is rejected at input,
-preview and export. Auto-fit measures it without generating rewrite proposals.
+preview and export. Auto-fit can convert its visible text to full width without
+inserting breaks or pages; otherwise it only measures the text.
 Timed repagination requires voice-clock rescheduling and is still reported.
 Other choice/topic/title/introduction labels are native single-line draws:
 format_text derives screen fit from authored anchors/panels; width overrides are
@@ -108,7 +109,12 @@ native brackets/breaks and hidden suffixes remain intact. Unsupported full-width
 punctuation and underscore stay unchanged (full-width underscore is a newline).
 Full-width words remain word-based; more pages/advance steps may be necessary.
 Review proposal warnings and single-line overflow. Timed/queued/retained-buffer
-Auto-fit rows remain read-only; no unsupported breaks or cue rescheduling.
+Auto-fit offers conversion-only proposals, including text before/after commands
+and ruby readings. Tags such as 《SP QUE,1,2700》 stay byte-for-byte unchanged.
+This one-for-one conversion preserves glyph indices and timing. It adds no breaks,
+hyphens or pages. The report measures the converted text and flags overflow or
+missing combined-buffer context for manual review. format_text also returns
+wrapping_skipped for timed conversion. Without conversion, these rows stay read-only.
 Preview samples the original font's full PVF cache cells, including for half-width
 Latin, with the player's cell metrics/baseline and separate source/destination
 rectangles. GSF bitmap overrides retain their authored geometry. Qt still supplies
@@ -132,7 +138,7 @@ same Undo/save/preview/export rules apply; literal text spaces are not removed.
 Queued-route text gets a read-only measured Fits/Overflow report. Selector/append
 and possible retained-buffer successors report isolated geometry with Context
 needed; combined display requires preceding route/buffer state. Such commands are
-not automatically rewritten. Auto layout follows the native load-time battle flag;
+only eligible for one-for-one width conversion. Auto layout follows the native load-time battle flag;
 approach setup does not override it merely by appearing in the same file.
 For older projects with timed breaks, undo timed wrapping or replace breaks with spaces
 while keeping its SP QUE directive; character-based wrapping may split words.

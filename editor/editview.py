@@ -60,7 +60,8 @@ class FormValue(QWidget):
                         try:
                             result=owner.text_layout.wrap(owner.opcode,self.input.toPlainText(),field='.'.join(str(p) if not isinstance(p,int) else f'[{p}]' for p in self.path).replace('.[','['),width=owner.wrap_width.value() or None,dialogue_mode=owner.dialogue_mode.currentData(),full_width_latin=owner.full_width.isChecked() or owner.proportional_font and supports_breaks(owner.opcode),preserve_speaker=owner.proportional_font)
                             self.input.selectAll();self.input.insertPlainText(result['editor_text'])
-                            note.setText(f"{result['line_count']} line(s), widest {max(result['line_widths'],default=0)}/{result['width']}px");owner.error.clear()
+                            note.setText(f"{result['line_count']} line(s), widest {max(result['line_widths'],default=0)}/{result['width']}px"
+                                         +(' · Conversion only; timed wrapping skipped' if result.get('wrapping_skipped') else ''));owner.error.clear()
                         except ValueError as error:owner.error.setText(str(error))
                     wrap.clicked.connect(format_text)
         elif isinstance(value,(int,bool)):

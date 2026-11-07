@@ -78,6 +78,19 @@ def full_width_text(value,font,*,controls=True,preserve_speaker=False):
 class TextLayoutService:
     def __init__(self,font,settings):self.font=font;self.settings=settings
 
+    def convert_dialogue_width(self,value,*,width=None,dialogue_mode='ordinary',preserve_speaker=False):
+        """One-for-one visible conversion without changing queue indices or breaks."""
+        conversion=full_width_text(value,self.font,preserve_speaker=preserve_speaker)
+        source=conversion.pop('text')
+        # Validate executable controls, including the timed explicit-break ban.
+        self.font.format.ordinary(source)
+        geometry=self.measure_dialogue(source,width=width,dialogue_mode=dialogue_mode)
+        geometry['measurement']='converted_command_text'
+        return dict(**geometry,editor_text=editable_newlines(source,self.font.format),changed=source!=value,
+                    full_width_conversion=conversion,inserted_breaks=0,hyphenations=0,
+                    break_character=self.font.format.break_char,breaks_supported=True,
+                    wrapping_skipped='Conversion only; existing timing, glyph indices and breaks preserved.')
+
     def measure_dialogue(self,value,*,width=None,dialogue_mode='ordinary'):
         """Read-only geometry; queue timing/index restrictions do not hide text.
 
@@ -173,6 +186,8 @@ class TextLayoutService:
 
     def wrap(self,opcode,value,*,field='',width=None,dialogue_mode='ordinary',hyphenate=False,full_width_latin=False,preserve_speaker=False):
         original=value;conversion=None
+        if full_width_latin and opcode==0x64 and self.font.format.ordinary(value)['markers']:
+            return self.convert_dialogue_width(value,width=width,dialogue_mode=dialogue_mode,preserve_speaker=preserve_speaker)
         if full_width_latin:
             conversion=full_width_text(value,self.font,controls=opcode in {0x64,0x3f2,0x3f8},preserve_speaker=preserve_speaker and opcode==0x64)
             value=conversion['text'];conversion={k:v for k,v in conversion.items() if k!='text'}

@@ -64,12 +64,13 @@ class AutoFitDialog(QDialog):
                 after=self.plan['font_asset']['manifest'].get('generator_revision',1)
                 self.font_note=f'Font asset update: {before} -> revision {after}. Saved/exported Font.gsf and preview metrics update with Apply; script text may stay unchanged. Undo restores both.'
             for change in self.plan['changes']:
-                details=change['details'];description=f"{change['page_count']} page(s)" if change['page_count']>1 else 'Wrap / normalize'
+                details=change['details'];description='Convert only' if details[0].get('wrapping_skipped') else f"{change['page_count']} page(s)" if change['page_count']>1 else 'Wrap / normalize'
                 capacity=f"; box fits {change['capacity']} lines" if change['capacity'] else ''
                 self.add_row(change['script_id'],change['command_id'],description,f"{max(d['line_count'] for d in details)} line(s)/page{capacity}",change,True)
             for issue in self.plan['issues']:
                 m=issue.get('measurement');status='Reported / skipped'
                 if m:status='Context needed' if m['context_required'] else 'Fits / read-only' if m['fits'] else 'Overflow / read-only'
+                if m and m['auto_edit']:status=status.replace('read-only','conversion only')
                 self.add_row(issue['script_id'],issue['command_id'],status,issue['reason'],issue,False)
             s=self.plan['summary'];self.status.setText(f"{s['scanned']} text commands scanned; {s['eligible']} eligible; {s['changed_commands']} changes; +{s['inserted_commands']} commands; {s['reported']} reported/skipped. Mechanical hyphens are not language-specific syllabification.")
             self.status.setText(self.status.text()+(' Font asset update pending.' if self.plan.get('font_changed') else ''))

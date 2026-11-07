@@ -161,31 +161,35 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
             if asset and c.opcode not in {0x64,0x3f2,0x3f8}:
                 plan['issues'].append(dict(script_id=sid,command_id=c.uid,reason='This label uses fixed-cursor DrawString. The proportional dialogue font asset cannot change that spacing; no automatic rewrite proposed.'));continue
             try:
+                unsafe=[];conversion_packet=None
                 if c.opcode==0x64:
                     parsed_geometry=font.format.ordinary(c.args['text'],geometry_only=True)
-                    unsafe=[]
                     if parsed_geometry['markers']:unsafe.append('Timed SP QUE dialogue')
                     if c.args['route']:unsafe.append('Queued dialogue')
                     if c.args['selector']:unsafe.append('Inherited/selector dialogue')
                     if c.args['completion']:unsafe.append('Append/non-default completion dialogue')
                     if c.uid in retained_context:unsafe.append('Previous message may retain appended text')
                     if unsafe:
-                        geometry=service.measure_dialogue(c.args['text'],width=width,dialogue_mode=mode)
+                        if full_width_latin:
+                            conversion_packet=service.convert_dialogue_width(c.args['text'],width=width,dialogue_mode=mode,preserve_speaker=bool(asset))
+                        geometry=deepcopy(conversion_packet) if conversion_packet else service.measure_dialogue(c.args['text'],width=width,dialogue_mode=mode)
                         capacity=dialogue_capacity(font,settings,mode)
                         if max_lines is not None:capacity=min(capacity,max_lines)
                         standalone_fits=geometry['line_count']<=capacity and max(geometry['line_widths'],default=0)<=geometry['width'] and not geometry['ruby_overflow']
                         context_required=bool(c.args['selector'] or c.uid in retained_context)
                         geometry.update(capacity=capacity,standalone_fits=standalone_fits,fits=None if context_required else standalone_fits,
-                                        context_required=context_required,auto_edit=False)
-                        reason=', '.join(unsafe)+': text measured; automatic rewriting/pagination remains disabled.'
+                                        context_required=context_required,auto_edit=bool(conversion_packet and conversion_packet['changed']))
+                        reason=', '.join(unsafe)+': text measured; automatic wrapping/pagination remains disabled.'
+                        if conversion_packet:reason+=' Full-width conversion only; control tags, timing, glyph counts and existing breaks preserved.'
                         if parsed_geometry['markers'] and font.format.break_char in parsed_geometry['body']:reason+=' '+TIMED_BREAK_ERROR
                         if context_required:reason+=' Combined appended/inherited display also needs preceding route/buffer state.'
                         if geometry['contains_plain_newlines']:reason+=' LF/CR are not native line breaks in the existing script.'
-                        plan['issues'].append(dict(script_id=sid,command_id=c.uid,reason=reason,measurement=geometry));continue
-                    parsed=font.format.ordinary(native_newlines(c.args['text'],font.format))
+                        plan['issues'].append(dict(script_id=sid,command_id=c.uid,reason=reason,measurement=geometry))
+                        if not conversion_packet or not conversion_packet['changed']:continue
+                    else:parsed=font.format.ordinary(native_newlines(c.args['text'],font.format))
                 args=deepcopy(c.args);details=[]
                 for key,value in fields:
-                    packet=service.wrap(c.opcode,value,field=key,width=width if supports_breaks(c.opcode) else label_width,dialogue_mode=mode,hyphenate=hyphenate,full_width_latin=full_width_latin,preserve_speaker=bool(asset))
+                    packet=conversion_packet or service.wrap(c.opcode,value,field=key,width=width if supports_breaks(c.opcode) else label_width,dialogue_mode=mode,hyphenate=hyphenate,full_width_latin=full_width_latin,preserve_speaker=bool(asset))
                     put(args,field_path(key),packet['text']);details.append(dict(field=key,**packet))
                 pages=[args];capacity=None;warnings=[]
                 if asset:warnings.append('Asset-only proportional dialogue font: Font.gsf is saved/exported with this project. Existing Japanese glyphs are retained; ASCII word spaces become shorter globally. Speaker/simple UI strings still use fixed cursor spacing.')
@@ -209,7 +213,8 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
                 if c.opcode==0x64:
                     capacity=dialogue_capacity(font,settings,mode)
                     if max_lines is not None:capacity=min(capacity,max_lines)
-                    if details[0]['line_count']>capacity:
+                    if unsafe:warnings.append('Conversion only. '+reason)
+                    if not unsafe and details[0]['line_count']>capacity:
                         if not paginate:raise ValueError(f"Dialogue needs {details[0]['line_count']} lines; box fits {capacity}. Enable pagination.")
                         packets=split_pages(service,args['text'],mode,details[0]['width'],capacity,hyphenate);pages=[]
                         for i,packet in enumerate(packets):
