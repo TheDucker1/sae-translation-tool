@@ -71,6 +71,9 @@ class UiTextBrowser(QDialog):
         self.edit.setPlainText(self.expected);self.edit.setReadOnly(not f['editable'])
         self.apply.setEnabled(f['editable']);self.revert.setEnabled(self.identity in self.project.ui_text_assets)
         self.note.setText(f.get('font_guidance','')+' Fit coverage: '+f['fit_policy']+'.')
+        from .uitext import metadata_issues
+        problems=metadata_issues({self.identity:dict(text=self.expected)},self.catalog)
+        if problems:self.note.setText('Export blocked: '+problems[0]['message'])
         self.details.setPlainText(json.dumps(f,ensure_ascii=False,indent=2)+'\n\nInventory coverage / issues:\n'+json.dumps(self.catalog.summary(),ensure_ascii=False,indent=2))
 
     def commit(self,revert=False):

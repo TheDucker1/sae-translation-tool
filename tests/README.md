@@ -91,3 +91,7 @@ proposal previews without project mutation. Run the focused module with
 Additional cases cover composed runtime text with paired selection, the numeric
 font-cache repair, help-group names containing slashes and indirectly indexed
 developer-test captions with native draw positions.
+Project recovery checks preserve overlong save metadata through GUI/MCP load,
+unrelated edits and save/reopen, including non-BMP UTF16 counting. They verify
+field-specific diagnostics, export rejection before output creation, repair at
+the exact boundary and continued rejection of altered source fingerprints.

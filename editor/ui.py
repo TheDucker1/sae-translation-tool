@@ -434,7 +434,7 @@ class Window(QMainWindow):
                 self.project.preview_issues=result['issues'];issues=self.project.validate() if result['issues'] else []
             except Exception as e:issues=[Diagnostic(self.script_id,None,'Python revision rejected: '+str(e))]
             finally:QApplication.restoreOverrideCursor()
-        warnings=[]
+        warnings=[Diagnostic(-1,None,'Game export blocked: '+v['message'],'warning',('ui_text_assets',v['field_id'])) for v in self.project.ui_metadata_issues()]
         if result:
             for item in result.get('warnings',[]):
                 script=self.project.scripts[item['script']];i=item.get('command',-1)

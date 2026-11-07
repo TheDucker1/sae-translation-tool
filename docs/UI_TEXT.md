@@ -97,6 +97,16 @@ is rejected; your draft remains available until you reselect/Refresh.
   Other fields have a4096 UTF16-unit editing limit; this is not a promise they
   fit their visual box.
 
+Platform save titles/subtitles/details have separate UTF16 buffer limits. An older
+project that exceeds one still opens and saves with its complete text intact;
+the Validation pane and selected UI field identify the field, current length and
+limit. Scenario preview remains available. Game export is blocked until the
+metadata is shortened. For example, the save title in `env/env_global.dat:#s1`
+allows31UTF16 units plus its terminator; this is not a dialogue-length limit.
+These capacities follow the [VitaSDK platform metadata structure](https://github.com/vitasdk/vita-headers/blob/master/include/psp2/apputil.h).
+Source fingerprints, encoding, control tokens and other structure guards remain
+enforced when loading projects. Nothing is silently truncated or migrated.
+
 The storage-space prompt has two linked fragments. Auto-fit checks their combined
 display with the runtime amount and uses the shared dialog's actual dimensions.
 Keep both fragment proposals checked. Font generator revision5 repairs the native
@@ -121,7 +131,7 @@ tool's scope and is not edited or exported.
 
 ## Agent workflow
 
-Restart the existing MCP server/client for version1.9. No new runtime dependencies or
+Restart the existing MCP server/client for version1.9.1. No new runtime dependencies or
 engine build are required. Standalone and GUI-hosted modes use the same fields:
 
 1. `list_ui_text(query,category,source,include_protected,start,limit)` discovers
@@ -133,6 +143,8 @@ engine build are required. Standalone and GUI-hosted modes use the same fields:
    data or an unapplied Auto-fit plan. It returns native PNG image content and
    layer geometry without changing the project. Its scene ID can be paged with
    `get_ui_scene_layers`. Missing native context is an explicit error.
+   `get_status` and `validate_project` expose `ui_metadata_issues`; validation
+   reports `export_ready=false` while an overlong platform field awaits repair.
 3. `apply_ui_text(expected_revision,edits)` takes up to100 objects with
    `field_id`, exact `expected_text`, and `translation`. A failed member rejects
    the whole batch. Missing/changed source, stale revisions and protected fields

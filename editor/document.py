@@ -125,6 +125,11 @@ class Project:
             records.append(codec.RawRecord(c.opcode,payload,c.post,0))
         return codec.assemble(bytes.fromhex(script.header),records,bytes.fromhex(script.tail))
 
+    def ui_metadata_issues(self):
+        if not self.ui_text_assets:return []
+        from .uitext import get_catalog,metadata_issues
+        return metadata_issues(self.ui_text_assets,get_catalog(self))
+
     def validate(self):
         out=[];locations=self.locations();total=sum(len(s.commands) for s in self.scripts.values())
         if self.ui_text_assets:
@@ -278,7 +283,7 @@ class Project:
             if text==c.fields[identity]['original']:after.pop(identity,None)
             else:after[identity]=record
         if before==after:return False
-        prepare(after,self.root,c)  # Consumer roundtrip of the complete candidate, before commit.
+        prepare(after,self.root,c,check_metadata=False)  # Draft persistence; publication capacities are export checks.
         scripts=self.scripts.copy()
         self.remember(('Edit UI text',scripts,scripts,self.font_asset,self.font_asset,self.texture_assets,self.texture_assets,before,after))
         self.ui_text_assets=after;self.redo_stack=[];self.revision=uuid.uuid4().hex
@@ -383,7 +388,7 @@ class Project:
         project.ui_text_assets=data.get('ui_text_assets',{})
         if project.ui_text_assets:
             from .uitext import get_catalog,prepare
-            prepare(project.ui_text_assets,base.root,get_catalog(project))
+            prepare(project.ui_text_assets,base.root,get_catalog(project),check_metadata=False)
         project._texture_catalog=validate_collection(project.texture_assets,base.root)
         if project.font_asset:
             from .fontpatch import validate_asset

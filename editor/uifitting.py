@@ -255,8 +255,6 @@ def validate_structure(field,text):
     for c in field.get('contracts',[]):
         if c['kind']=='composed_dialog' and c['joiner'] in text:
             raise ValueError('The runtime amount glyph is inserted by the executable, not stored in either fragment')
-        if c['kind']=='save_metadata' and c.get('max_units') and len(units(text))>=c['max_units']:
-            raise ValueError(f'Platform metadata allows {c["max_units"]-1} UTF16 units plus its terminator')
         if c['kind']=='hex_color' and not re.fullmatch('[0-9a-fA-F]{6}',text):raise ValueError('Profile RGB field requires six hexadecimal digits')
         if c['kind']=='separator' and not text:raise ValueError('Native text separator cannot be empty')
         if c['kind']=='truncation_suffix' and len(units(text))>1:raise ValueError('Native save-title suffix reserves one UTF16 unit')

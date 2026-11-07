@@ -186,6 +186,7 @@ class TranslationWorkspace:
                     for name,value in fields(c).items():total+=1;modified+=old.get(name)!=value
             self._cache[key]=dict(scripts=len(self.project.scripts),text_fields=total,modified_text_fields=modified)
         return dict(revision=self.project.revision,unsaved=self.project.saved_revision!=self.project.revision,
+                    ui_metadata_issues=self.project.ui_metadata_issues(),
                     texture_replacement_count=len(getattr(self.project,'texture_assets',{})),
                     ui_text_replacement_count=len(getattr(self.project,'ui_text_assets',{})),
                     font_asset={k:self.project.font_asset['manifest'].get(k) for k in ('format','font_sha256','source_sha256','generator_revision')} if self.project.font_asset else None,
@@ -585,7 +586,9 @@ class TranslationWorkspace:
     def validate_project(self,limit:Limit=50)->dict[str,Any]:
         """Validate encoding/text controls, typed targets, branch structure and counts; this does not judge translation quality."""
         issues=self.diagnostics()
-        return dict(revision=self.project.revision,valid=not issues,issue_count=len(issues),issues=[asdict(d) for d in issues[:limit]])
+        metadata=self.project.ui_metadata_issues()
+        return dict(revision=self.project.revision,valid=not issues,export_ready=not issues and not metadata,
+                    ui_metadata_issues=metadata,issue_count=len(issues),issues=[asdict(d) for d in issues[:limit]])
 
     @locked
     def undo(self,expected_revision:Id)->dict[str,Any]:

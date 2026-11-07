@@ -52,6 +52,46 @@ class UiText(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
 
+    def test_overlong_platform_metadata_loads_unchanged_but_blocks_export(self):
+        from types import SimpleNamespace
+        from editor.translation import TranslationWorkspace
+        from editor.uitextview import UiTextBrowser
+        with tempfile.TemporaryDirectory(dir=ROOT/'.local') as tmp:
+            folder=Path(tmp);p,_,_=fixture(folder/'original');root=Path(p.root)
+            (root/'env/env_global.dat').write_bytes(global_fixture());c=get_catalog(p)
+            key='env/env_global.dat:#s1';text='A'*30+'😀'  # 31 characters,32 UTF16 units.
+            p.set_ui_texts([(key,c.fields[key]['original'],text)])
+            workspace=folder/'workspace';workspace.mkdir()
+            saved=workspace/'old.saekano.json';p.save(saved);original_bytes=saved.read_bytes()
+            loaded=Project.load(saved,p)
+            self.assertEqual(loaded.ui_text_assets[key]['text'],text)
+            self.assertEqual(loaded.ui_metadata_issues()[0]['actual_units'],32)
+            self.assertFalse(loaded.validate())  # Scenario validity is independent of platform publication.
+            help_id='env/env_help_mgr.dat:#s0'
+            loaded.set_ui_texts([(help_id,c.fields[help_id]['original'],'Move')])
+            copy=workspace/'copy.saekano.json';loaded.save(copy)
+            self.assertEqual(Project.load(copy,p).ui_text_assets[key]['text'],text)
+            self.assertEqual(saved.read_bytes(),original_bytes)
+            owner=QWidget();owner.project=loaded;browser=UiTextBrowser(owner)
+            try:
+                browser.set_project(loaded);browser.search.setText(key);browser.table.selectRow(0);browser.selected()
+                self.assertIn('Export blocked',browser.note.text());self.assertIn(key,browser.note.text())
+            finally:browser.close();owner.close()
+            ws=TranslationWorkspace.__new__(TranslationWorkspace)
+            ws.initialize(loaded,SimpleNamespace(original={},descriptions={}),workspace)
+            result=ws.load_project('old.saekano.json',loaded.revision)
+            self.assertEqual(result['ui_metadata_issues'][0]['field_id'],key)
+            self.assertFalse(ws.validate_project()['export_ready'])
+            target=folder/'export'
+            with self.assertRaisesRegex(ExportError,r'env_global.dat:#s1.*32 UTF16.*31'):export_game(ws.project,target)
+            self.assertFalse(target.exists())
+            ws.project.set_ui_texts([(key,text,'A'*31)])
+            self.assertFalse(ws.project.ui_metadata_issues());prepare(ws.project.ui_text_assets,root,c)
+            # Recovery never weakens provenance checking.
+            damaged=json.loads(original_bytes);damaged['ui_text_assets'][key]['span_sha256']='0'*64
+            bad=folder/'damaged.saekano.json';bad.write_text(json.dumps(damaged),encoding='utf-8')
+            with self.assertRaisesRegex(ValueError,'fingerprint'):Project.load(bad,p)
+
     def test_typed_tip_columns_preserve_original_rows_and_export_bytes(self):
         from test_composition_modes import profile_environment_fixture
         from editor.compositionmodes import profile_environment,description_lines,profile_separator

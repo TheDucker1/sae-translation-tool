@@ -98,6 +98,8 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
         locations=project.locations()
         raise ExportError('Project validation failed: '+ '; '.join(
             f'Script {d.script}, command {locations.get(d.command,(-1,"?"))[1]} ({d.command}): {d.message}' for d in issues[:5]))
+    metadata=project.ui_metadata_issues()
+    if metadata:raise ExportError('UI text export validation failed: '+'; '.join(v['message'] for v in metadata))
     first_bytes=(root/'first.dat').read_bytes();resource_bytes=(root/'resource.dat').read_bytes()
     if any(stamp(root/name)!=value for name,value in source_stamps.items()):raise ExportError('Source changed while preparing export')
     first=Archive(first_bytes);resource=Archive(resource_bytes);scripts=nested(resource,4)

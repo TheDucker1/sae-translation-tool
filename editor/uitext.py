@@ -149,6 +149,21 @@ def validate_records(records,c):
         if record!=make_record(c,identity,record['text']):raise ValueError('UI text source fingerprint mismatch: '+identity)
 
 
+def metadata_issues(records,c):
+    """Publication limits, not project-file corruption or scenario errors."""
+    from .text import units
+    issues=[]
+    for identity,record in records.items():
+        f=c.fields[identity]
+        for contract in f.get('contracts',[]):
+            cap=contract.get('max_units')
+            if contract['kind']=='save_metadata' and cap and len(units(record['text']))>=cap:
+                actual=len(units(record['text']));limit=cap-1
+                issues.append(dict(field_id=identity,source=f['source'],actual_units=actual,max_units=limit,
+                    message=f'{identity}: platform save metadata is {actual} UTF16 units; maximum {limit} plus terminator. Shorten this UI field before game export. Project text is preserved.'))
+    return issues
+
+
 def effective_node(c,node_id,records,data=None):
     n=c.nodes[node_id];edits={f['index']:records[key]['text'] for key,f in c.fields.items() if f['node_id']==node_id and key in records}
     from .uifit import preserved_tip_edits,validate_tips
@@ -178,9 +193,12 @@ def effective_node(c,node_id,records,data=None):
     return result
 
 
-def prepare(records,root,catalog=None):
+def prepare(records,root,catalog=None,*,check_metadata=True):
     if not records:return {},[],None
     c=catalog or build_catalog(root);validate_records(records,c);changes={};rows=[]
+    if check_metadata:
+        problems=metadata_issues(records,c)
+        if problems:raise ValueError('; '.join(p['message'] for p in problems))
     nodes={c.fields[key]['node_id'] for key in records}
     from .uifit import profile_context
     context=profile_context(c,records)

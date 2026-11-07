@@ -120,7 +120,7 @@ class Session:
         candidate.profile_metadata=self.original_profile_metadata;candidate.settings=self.original_settings
         if ui_text_assets:
             from .uitext import build_catalog,prepare,effective_node
-            catalog=build_catalog(self.root);prepare(ui_text_assets,self.root,catalog)
+            catalog=build_catalog(self.root);prepare(ui_text_assets,self.root,catalog,check_metadata=False)
             def read_asset(source,route):
                 identity=source+':'+('/'.join(map(str,route)))
                 return effective_node(catalog,identity,ui_text_assets) if identity in catalog.nodes else catalog.read(source,route)[0]
