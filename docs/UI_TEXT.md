@@ -79,8 +79,11 @@ is rejected; your draft remains available until you reselect/Refresh.
   searchable `fit_policy`. `consumer_checked` has native geometry/format checks;
   `profile_tips` has its separate count/row rule. `metadata` covers color codes,
   input-glyph prefixes, catalogue names and platform save data, not a game-font
-  box. `requires_context` reports unbound native owners, legacy paths and composed
-  runtime messages. A field can still overflow for a particular translation.
+  box. `retained` identifies compatibility text for which the target Vita audit
+  found loading/initialization but no drawn consumer. These strings stay editable
+  and exportable; the tool does not invent a screen or report them as fitted.
+  `requires_context` remains an explicit diagnostic for an incomplete or unknown
+  source layout. A checked field can still overflow for a particular translation.
   A contract's `scene` supplies the actual preview family/state when available.
   `layout_setting` is a bounded numeric asset field, not a translated label.
   `measured_layout` supports
@@ -94,6 +97,18 @@ is rejected; your draft remains available until you reselect/Refresh.
   Other fields have a4096 UTF16-unit editing limit; this is not a promise they
   fit their visual box.
 
+The storage-space prompt has two linked fragments. Auto-fit checks their combined
+display with the runtime amount and uses the shared dialog's actual dimensions.
+Keep both fragment proposals checked. Font generator revision5 repairs the native
+integer-as-UTF16 append by drawing its existing runtime codepoint as **7456**.
+This is an extra generated font-cache glyph, not an executable change or text
+control alias. Older fonts receive an explicit upgrade diagnostic for this path.
+Do not manually include the runtime marker or duplicate the amount in a fragment.
+
+The developer test captions have their own fixed-cell list consumer. **Preview
+field…** or scene family `test` shows its root menu with the authored text,
+selection marker, native positions and colors; test scenes and Live2D do not run.
+
 The inventory reports known schema coverage and errors explicitly. Text inside
 an executable, user-created save content and lettering baked into textures are
 not counted as editable environment fields. Exposing a field is not a claim
@@ -106,7 +121,7 @@ tool's scope and is not edited or exported.
 
 ## Agent workflow
 
-Restart the existing MCP server/client for version1.8. No new dependencies or
+Restart the existing MCP server/client for version1.9. No new runtime dependencies or
 engine build are required. Standalone and GUI-hosted modes use the same fields:
 
 1. `list_ui_text(query,category,source,include_protected,start,limit)` discovers

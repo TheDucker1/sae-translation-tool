@@ -69,6 +69,8 @@ class AutoFitDialog(QDialog):
                 before=self.project.font_asset['manifest'].get('generator_revision',1) if self.project.font_asset else 'Original'
                 after=self.plan['font_asset']['manifest'].get('generator_revision',1)
                 self.font_note=f'Font asset update: {before} -> revision {after}. Saved/exported Font.gsf and preview metrics update with Apply; script text may stay unchanged. Undo restores both.'
+                if self.plan['font_asset']['manifest'].get('native_storage_amount'):
+                    self.font_note+=' Includes the asset-only repair of the native storage amount glyph (7456 KB).'
             for change in self.plan['changes']:
                 details=change['details'];description='Convert only' if details[0].get('wrapping_skipped') else f"{change['page_count']} page(s)" if change['page_count']>1 else 'Space padding' if details[0].get('break_strategy')=='spaces' else 'Wrap / normalize'
                 capacity=f"; box fits {change['capacity']} lines" if change['capacity'] else ''
@@ -83,10 +85,11 @@ class AutoFitDialog(QDialog):
                 self.add_row(None,change['field_id'],'UI layout' if change['renderer']=='layout_setting' else 'UI text',change['note'],change,True)
             changed_ui={c['field_id'] for c in self.plan['ui_changes']}
             for check in self.plan.get('ui_checks',[]):
-                if check['field_id'] not in changed_ui:self.add_row(None,check['field_id'],'UI checked',check['reason'],check,False)
+                if check['field_id'] not in changed_ui:self.add_row(None,check['field_id'],'Retained / not drawn' if check.get('fit_policy')=='retained' else 'UI checked',check['reason'],check,False)
             s=self.plan['summary'];self.status.setText(f"{s['scanned']} text commands scanned; {s['changed_commands']} script changes; {s['changed_ui_fields']} UI changes; +{s['inserted_commands']} commands; {s['reported']} reported/skipped. Mechanical hyphens are not language-specific syllabification.")
             self.status.setText(self.status.text()+(' Font asset update pending.' if self.plan.get('font_changed') else ''))
             self.status.setText(self.status.text()+f" {s.get('checked_ui_fields',0)} UI fields checked against their consumers.")
+            if s.get('retained_ui_fields'):self.status.setText(self.status.text()+f" {s['retained_ui_fields']} retained fields have no active display consumer.")
             if s.get('ui_font_only'):self.status.setText(self.status.text()+f" {s['ui_font_only']} UI fields have font normalization only; their fit geometry is not implemented.")
             self.apply_button.setText('Apply font update + checked text' if self.plan.get('font_changed') else 'Apply checked changes')
             self.apply_button.setEnabled(bool(self.plan['changes'] or self.plan['ui_changes']) or self.plan.get('font_changed',False))

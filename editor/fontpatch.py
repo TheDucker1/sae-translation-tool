@@ -3,7 +3,20 @@ import argparse,hashlib,json,math,struct
 from pathlib import Path
 from .text import TextPresentation,font_atlas
 
-GENERATOR_REVISION=4
+GENERATOR_REVISION=5
+STORAGE_GLYPH=0x1d20
+STORAGE_AMOUNT='7456'
+
+
+def storage_glyph(raw,font):
+    """Repair the native integer-as-UTF16 append through its existing cache key."""
+    indexes=raw.glyphIndexesForString(STORAGE_AMOUNT);runs=[];x=0
+    if len(indexes)!=len(STORAGE_AMOUNT) or not all(indexes):raise ValueError('Original font has no storage amount digits')
+    for index in indexes:
+        rect=raw.boundingRect(index);left=math.floor(rect.left());ink=math.ceil(rect.right())-left
+        runs.append((index,x-left));x+=ink+1
+    return dict(character=STORAGE_GLYPH,source=STORAGE_AMOUNT,index=None,left=0,
+        width=dialogue_width(x-1,font,1),runs=runs,fixed=False)
 
 
 def dialogue_width(ink_width,font,gap):
@@ -84,6 +97,7 @@ def build(root):
     baseline=math.ceil(max(-raw.boundingRect(g['index']).top() for g in glyphs))
     bottom=max(math.ceil(raw.boundingRect(g['index']).bottom()) for g in glyphs)
     if baseline+bottom>height:raise ValueError('Latin ink exceeds the original shared bitmap height')
+    glyphs.append(storage_glyph(raw,font))
     # Native ASCII-space measurement halves the recorded width. Its blank mask
     # has no ink, so a doubled metadata width supplies a normal short word space.
     glyphs.append(dict(character=32,source=' ',index=None,left=0,width=18,fixed=False))
@@ -94,9 +108,10 @@ def build(root):
         if x+width+1>atlas_width:x=1;y+=height+2
         if y+height+1>atlas_height:raise ValueError('Latin atlas exceeded bounded capacity')
         image=QImage(width,height,QImage.Format_RGBA8888);image.fill(0)
-        if g['index'] is not None:
-            run=QGlyphRun();run.setRawFont(raw);run.setGlyphIndexes([g['index']]);run.setPositions([QPointF(-g['left'],baseline)])
-            painter=QPainter(image);painter.setPen(QColor('white'));painter.translate(g['padding'],0);painter.scale(g['ink_scale'],1);painter.drawGlyphRun(QPointF(0,0),run);painter.end()
+        if g['index'] is not None or g.get('runs'):
+            runs=g.get('runs',[(g['index'],-g['left'])])
+            run=QGlyphRun();run.setRawFont(raw);run.setGlyphIndexes([i for i,x in runs]);run.setPositions([QPointF(x,baseline) for i,x in runs])
+            painter=QPainter(image);painter.setPen(QColor('white'));painter.translate(g.get('padding',0),0);painter.scale(g.get('ink_scale',1),1);painter.drawGlyphRun(QPointF(0,0),run);painter.end()
         pixels=bytes(image.constBits())
         for row in range(height):
             for col in range(width):coverage[(y+row)*atlas_width+x+col]=pixels[(row*width+col)*4+3]
@@ -110,6 +125,7 @@ def build(root):
         nominal=nominal,bitmap_height=height,glyphs=report,
         scope='Proportional dialogue aliases and readable fixed-cursor Latin bitmap cells from the same font face.',
         ui_bitmap_cells=True,ui_cell_ink_width=11,
+        native_storage_amount=dict(codepoint=STORAGE_GLYPH,text=STORAGE_AMOUNT,reason='Native capacity value is appended as one UTF16 unit'),
         dialogue_spacing='native_scaled_ink_plus_gap',dialogue_gap_pixels=1,
         limitations=['Simple DrawString names/UI still use fixed cursor advances.',
                     'Use matching patched font metrics when rewrapping scripts.',

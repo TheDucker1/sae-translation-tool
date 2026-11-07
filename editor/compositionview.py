@@ -140,14 +140,14 @@ class CompositionBrowser(QDialog):
         self.selected.setSpecialValueText('No focus')
         for widget in (self.variant, self.press_start): widget.setEnabled(key == 'title')
         for widget in (self.speaker, self.opacity, self.skip, self.auto, self.cursor): widget.setEnabled(key == 'message')
-        self.selected.setEnabled(key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras', 'profile')); self.progress.setEnabled(key in ('title', 'message', 'choices', 'dialogs'))
+        self.selected.setEnabled(key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras', 'profile', 'test')); self.progress.setEnabled(key in ('title', 'message', 'choices', 'dialogs'))
         self.chapter.setEnabled(key in ('system', 'calendar')); self.backdrop.setEnabled(key != 'title'); self.text.setEnabled(key != 'title')
         common = {
-            self.selected: key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras', 'profile'), self.variant: key == 'title',
+            self.selected: key in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras', 'profile', 'test'), self.variant: key == 'title',
             self.press_start: key == 'title', self.progress: key in ('title', 'message', 'choices', 'dialogs'),
             self.angle: key in ('title', 'message'), self.speaker: key == 'message', self.opacity: key == 'message',
             self.chapter: key in ('system', 'calendar'), self.skip: key == 'message', self.auto: key == 'message',
-            self.cursor: key in ('message', 'profile'), self.text: key not in ('title', 'settings', 'extras', 'profile', 'battle'), self.backdrop: key != 'title'}
+            self.cursor: key in ('message', 'profile'), self.text: key not in ('title', 'settings', 'extras', 'profile', 'battle', 'test'), self.backdrop: key != 'title'}
         self.cursor.setEnabled(key in ('message', 'profile'))
         for widget, visible in common.items(): self.form.setRowVisible(widget, visible)
         while self.extra_form.rowCount(): self.extra_form.removeRow(0)
@@ -211,6 +211,10 @@ class CompositionBrowser(QDialog):
         if len(state['text']) > 4096:
             self.status.setText('Sample text is limited to4096 characters.'); return
         try:
+            if key=='test':
+                from .compositiontest import test_environment
+                count=len(cached(self.library,'developer_test','env/env_test.dat',test_environment)['labels'])
+                self.selected.blockSignals(True);self.selected.setMaximum(max(0,count-1));self.selected.blockSignals(False);state['selected']=self.selected.value()
             if key == 'battle':
                 for name, control in self.parameters.items(): self.extra_form.setRowVisible(control, battle_parameter_visible(name, state['view']))
                 self.form.setRowVisible(self.opacity, state['view'] == 1); self.opacity.setEnabled(state['view'] == 1)

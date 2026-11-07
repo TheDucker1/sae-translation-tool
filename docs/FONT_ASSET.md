@@ -70,6 +70,14 @@ and export a new copy. Explicit authored breaks remain hard by default.
 It preserves literal spaces in the script; it does not guess which spaces the
 translator intended or introduce pair-specific kerning.
 
+Revision5 adds one bitmap cache entry for the storage-space error prompt. The
+native program appends its capacity value as a single UTF16 codepoint rather
+than decimal text. That existing runtime codepoint now draws **7456** using the
+original font's digits. The original charset and glyph records remain intact;
+no marker is inserted into translated strings. Auto-fit measures the same glyph
+inside the combined prompt and proposes the font update through normal Apply,
+Undo, save and separate export. Other dialogue/UI advances are unchanged.
+
 ## Limits
 
 - Dialogue, multiline battle text and result text use the variable glyph widths.

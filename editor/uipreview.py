@@ -8,7 +8,9 @@ def preview_snapshot(project,field_id,*,plan=None,selected=None):
     c=get_catalog(project)
     if field_id not in c.fields:raise ValueError('Select a UI text field')
     recipes=[v['scene'] for v in c.fields[field_id].get('contracts',[]) if v.get('scene')]
-    if not recipes:raise ValueError('No composition recipe for this field. Its contract/diagnostics explain the required native context.')
+    if not recipes:
+        if c.fields[field_id]['fit_policy']=='retained':raise ValueError('This retained compatibility text has no drawn screen in the target Vita game. It remains editable/exportable; its consumer contract records the unused path.')
+        raise ValueError('This field has no rendered composition. Inspect its role and consumer contract.')
     view=copy(project);view.ui_text_assets=project.ui_text_assets.copy()
     if plan is not None:
         if plan['revision']!=project.revision:raise ValueError('Stale Auto-fit plan; analyze again before previewing')
@@ -20,6 +22,8 @@ def preview_snapshot(project,field_id,*,plan=None,selected=None):
             else:view.ui_text_assets[key]=make_record(c,key,text)
     value=view.ui_text_assets.get(field_id,{}).get('text',c.fields[field_id]['original'])
     recipe=recipes[0];state=dict(recipe.get('state',{}))
+    if recipe.get('composition'):
+        combined=recipe['composition'];value=combined['joiner'].join(view.ui_text_assets.get(key,{}).get('text',c.fields[key]['original']) for key in combined['members'])
     if recipe.get('text_parameter')=='text':state['text']=value
     return view,dict(recipe,state=state),c,value
 

@@ -249,7 +249,9 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
         plan['issues'].extend(ui_issues)
     else:plan['ui_checks']=[]
     plan['summary']=dict(scanned=plan['scanned'],eligible=plan['eligible'],changed_commands=len(plan['changes']),changed_ui_fields=len(plan['ui_changes']),
-                         inserted_commands=sum(c['page_count']-1 for c in plan['changes']),reported=len(plan['issues']),ui_font_only=ui_font_only,checked_ui_fields=len(plan.get('ui_checks',[])))
+                         inserted_commands=sum(c['page_count']-1 for c in plan['changes']),reported=len(plan['issues']),ui_font_only=ui_font_only,
+                         checked_ui_fields=sum(c.get('fit_policy')!='retained' for c in plan.get('ui_checks',[])),
+                         retained_ui_fields=sum(c.get('fit_policy')=='retained' for c in plan.get('ui_checks',[])))
     return plan
 
 
@@ -270,6 +272,11 @@ def apply_cleanup(project,plan,command_ids=None):
     available=set(changes)|set(ui_changes)
     wanted=available if command_ids is None else set(command_ids)
     if wanted-available:raise ValueError('Selected item is not in this cleanup plan')
+    for key in wanted&ui_changes.keys():
+        for contract in ui_changes[key].get('contracts',[]):
+            if contract['kind']=='composed_dialog':
+                dependencies=set(contract['members'])&ui_changes.keys()
+                if dependencies-wanted:raise ValueError('Keep both composed storage-message fragment proposals checked; nothing applied')
     font_changed=plan.get('font_asset',project.font_asset)!=project.font_asset
     if not wanted and not font_changed:return dict(revision=project.revision,changes=[],inserted_commands=0,font_changed=False)
     from .document import Command

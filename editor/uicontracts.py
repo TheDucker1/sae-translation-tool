@@ -52,6 +52,21 @@ class Contracts:
             scene=dict(family='dialogs',state=dict(group=group),text_parameter='text'),dialog_group=group,
             dialog=dict(settings=e['settings'],tile=e['parts'][0][5],border=e['parts'][0][5]+e['parts'][6][5],button_scale=e['scales'][0]))
 
+    def retained(self,value,note):
+        self.bind(value,'retained_text',renderer='metadata',note=note,rendered=False)
+
+    def storage_dialog(self):
+        """Two authored fragments and the native UTF16 capacity append."""
+        from .fontpatch import STORAGE_GLYPH,STORAGE_AMOUNT
+        values=[FieldText(self.c.fields['env/env_save_manager.dat:#s'+str(i)]['original'],
+            'env/env_save_manager.dat:#s'+str(i)) for i in (46,47)]
+        members=[v.field_id for v in values]
+        for value in values:
+            self.dialog(value,group=0);contract=self.bound[value.field_id][-1]
+            contract.update(kind='composed_dialog',members=members,joiner=chr(STORAGE_GLYPH),
+                runtime_display=STORAGE_AMOUNT,note='Native storage message: review both fragments together; the selected font repairs its runtime amount glyph.')
+            contract['scene']['composition']=dict(members=members,joiner=chr(STORAGE_GLYPH))
+
     def simple(self):
         from .composition import title_environment
         from .compositionsettings import settings_environment
@@ -170,7 +185,8 @@ class Contracts:
             return out
         for group in self.parse('env/env_help_mgr.dat',groups):
             members=[dict(key=key,field_id=value.field_id) for key,value in group['entries']]
-            name,_,row=group['name'].partition('/');index=int(row) if row else 0
+            parts=group['name'].rsplit('/',1)
+            name,index=(parts[0],int(parts[1])) if len(parts)==2 and parts[1].isdigit() else (group['name'],0)
             scene=None
             if name=='Common':scene=dict(family='backlog',state={})
             elif name=='Settings' and index<2:scene=dict(family='settings',state=dict(page=index,selected=3 if index else 0))
@@ -181,6 +197,10 @@ class Contracts:
                 scene=dict(family='extras',state=dict(view='music',music_mode=(0,2,1)[index//2],playing=bool(index%2)))
             elif name in ('Movies','Replay') and index==0:scene=dict(family='extras',state=dict(view=name.lower()))
             for _,value in group['entries']:
+                if group['rectangle'] is None:
+                    note=('Retained system-menu helper: constructed from this table, but neither the native nor PC menu draw path renders it.'
+                        if name=='Scenario confirmation' else 'Retained compatibility help table: loaded by the Vita environment reader, with no active draw consumer in this game.')
+                    self.retained(value,note);continue
                 self.bind(value,'help_group',rectangle=group['rectangle'],members=members,
                     keys=list(map(str,style['keys'])),separator=str(style['separator']),
                     scale=style['scale'],gap=style['gap'],group=group['name'],scene=scene)
@@ -261,6 +281,13 @@ class Contracts:
             left=max([0]+[(center+x)//2 for x in others if x<center]);right=min([960]+[(center+x)//2 for x in others if x>center])
             self.fixed(value,[center,p[1]+off[1]],e['label_scale'],left,right,align='center',scene=dict(family='battle',state=dict(view='choices')))
 
+    def tests(self):
+        if 'env/env_test.dat:' not in self.c.nodes:return
+        from .compositiontest import test_environment
+        e=self.parse('env/env_test.dat',test_environment)
+        for i,value in enumerate(e['labels']):
+            self.fixed(value,[100,100+24*i],1,left=100,right=960,scene=dict(family='test',state=dict(selected=i)))
+
     def legacy(self):
         for f in self.c.fields.values():
             if not f['editable'] or f['field_id'] in self.bound:continue
@@ -268,13 +295,13 @@ class Contracts:
             if name=='env_save_manager.dat':
                 if i<3:self.bind(value,'save_metadata',renderer='metadata',max_units=(32,64,256)[i])
                 elif i in (4,5):self.bind(value,'dialog_button_list',separator='＿')
-                elif i in (46,47):self.bind(value,'requires_context',renderer='measured_layout',note='Storage requirement message is assembled from two fields and a runtime value; it must be checked as a composed message')
+                elif i in (46,47):self.storage_dialog()
                 elif i>=44:self.dialog(value,group=-1 if i in (44,45) else 0)
-                else:self.bind(value,'requires_context',renderer='consumer_unverified',note='Legacy save path; current source binds mode2 strings44..55 only. Native case/formatting context is needed.')
+                else:self.retained(value,'Retained compatibility save text: initialized and loaded, but the Vita save worker uses platform dialogs and its separate live message table. No active game-font draw consumer.')
             elif name=='env_global.dat':
                 if i in (1,2,3):self.bind(value,'save_metadata',renderer='metadata',max_units=(32,64,256)[i-1])
                 elif i in (9,10,23):self.bind(value,'dialog_button_list',separator='＿')
-                else:self.bind(value,'requires_context',renderer='consumer_unverified',note='Bootstrap/platform fallback text; runtime owner/layout is required')
+                else:self.retained(value,'Retained platform fallback text: loaded by the environment reader, but not consumed by the Vita startup/dialog paths. No active draw consumer.')
             elif name=='env_script.dat':
                 if i in (1,2,3,7):self.bind(value,'save_metadata',renderer='metadata')
                 elif i==0:self.bind(value,'catalogue_metadata',renderer='metadata',note='Legacy keyword-acquisition template; its opcode has no occurrence in the imported game')
@@ -286,13 +313,13 @@ class Contracts:
                 self.bind(value,'save_metadata',renderer='metadata',note='Native save-browser product name, not a game-font label')
             elif name in ('env_debug.dat','env_test.dat','env_first.dat'):
                 if name=='env_first.dat':self.dialog(value,group=-1)
-                else:self.bind(value,'requires_context',renderer='consumer_unverified',note='Debug/test native owner is not exposed in the current playable composition paths')
+                else:self.retained(value,'Retained debug/test caption: loaded by its environment reader, but not referenced by the Vita widget/scene constructors or draw paths.')
 
 
 def annotate(catalog):
     """Bound contracts are immutable source facts; final font metrics come later."""
     b=Contracts(catalog)
-    for method in (b.simple,b.profile,b.prompts,b.help,b.extras,b.slots,b.battle,b.legacy):
+    for method in (b.simple,b.profile,b.prompts,b.help,b.extras,b.slots,b.battle,b.tests,b.legacy):
         try:method()
         except (KeyError,ValueError,OSError,IndexError) as error:
             # Minimal fixtures / incomplete imports retain explicit unresolved
@@ -305,6 +332,6 @@ def annotate(catalog):
         kinds={c['kind'] for c in contracts}
         metadata={'catalogue_metadata','save_metadata','hex_color','glyph_prefix','separator'}
         context='requires_context' in kinds or any(c['kind']=='help_group' and c['rectangle'] is None for c in contracts)
-        field['fit_policy']='profile_tips' if kinds=={'profile_tips'} else 'requires_context' if context else 'metadata' if kinds<=metadata else 'consumer_checked'
+        field['fit_policy']='profile_tips' if kinds=={'profile_tips'} else 'retained' if kinds=={'retained_text'} else 'requires_context' if context else 'metadata' if kinds<=metadata else 'consumer_checked'
         from .fontstyle import NOTES
-        field['font_guidance']=NOTES.get(field['renderer'],'Structured metadata; ordinary font normalization is not applicable.')
+        field['font_guidance']=contracts[0]['note'] if kinds=={'retained_text'} else NOTES.get(field['renderer'],'Structured metadata; ordinary font normalization is not applicable.')

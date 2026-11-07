@@ -88,3 +88,6 @@ constraints, native multiline height, formatted operand preservation, grouped he
 source-parser field provenance, panel-alpha/cursor exclusions and revision-bound
 proposal previews without project mutation. Run the focused module with
 `$env:PYTHONPATH='tests'; .venv/Scripts/python -m unittest test_ui_fitting -q`.
+Additional cases cover composed runtime text with paired selection, the numeric
+font-cache repair, help-group names containing slashes and indirectly indexed
+developer-test captions with native draw positions.

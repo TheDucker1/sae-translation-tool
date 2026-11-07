@@ -25,7 +25,7 @@ def controls(family):
     if family not in FAMILY_NAMES: raise ImageError('Unknown UI scene family; call list_ui_scenes')
     rows = []
     def add(*args): rows.append(field(*args))
-    if family in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras', 'profile'):
+    if family in ('title', 'system', 'choices', 'dialogs', 'slots', 'backlog', 'settings', 'extras', 'profile', 'test'):
         add('selected', 'Selected row/cell (zero-based)', 'int', 0, -1 if family in ('choices', 'dialogs') else 0, 999)
     if family == 'title':
         add('character', 'Title presentation variant', 'int', 0, 0, 3); add('press_start', 'Press-start layout', 'bool', False)
@@ -67,6 +67,9 @@ def resolve_state(library, family, supplied=None):
     validate_values(schema, supplied)
     state = {name: deepcopy(spec['default']) for name, spec in schema.items()}; state.update(supplied)
     limits = {}
+    if family=='test':
+        from .compositiontest import test_environment
+        limits['selected']=len(cached(library,'developer_test','env/env_test.dat',test_environment)['labels'])-1
     if family == 'title': limits['selected'] = len(library.get('title').points[0x314]) - 1
     if family == 'system': limits['selected'] = 4
     if family == 'slots': limits['selected'] = 59

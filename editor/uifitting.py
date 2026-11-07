@@ -101,6 +101,19 @@ def field_fit(identity,value,catalog,working,font,*,reflow,hyphenate,skip=False,
         if kind=='profile_tips':continue
         if kind=='requires_context':raise ValueError(c['note'])
         if kind=='fixed':checks.extend(fixed_check(value,c,font))
+        elif kind=='retained_text':checks.append(dict(kind=kind,rendered=False,note=c['note']))
+        elif kind=='composed_dialog':
+            if c['joiner'] not in font.cached:
+                raise ValueError('Native storage amount is an unsupported runtime glyph. Enable the font asset upgrade in Auto-fit to display its correct numeric value.')
+            pieces=[native_newlines(current(catalog,working,key),font.format) for key in c['members']]
+            if any(c['joiner'] in piece for piece in pieces):raise ValueError('Storage amount is inserted by the executable; do not put its runtime marker in either text fragment')
+            packet=ConsumerLayout(font,c).wrap(0x3f8,c['joiner'].join(pieces),reflow=reflow,hyphenate=hyphenate)
+            parts=packet['text'].split(c['joiner'])
+            if len(parts)!=len(c['members']):raise ValueError('Wrapping changed the native storage insertion point')
+            working.update(zip(c['members'],parts));value=working[identity]
+            checks.append(dict(kind=kind,members=c['members'],runtime_display=c['runtime_display'],
+                line_count=packet['line_count'],line_widths=packet['line_widths'],width=c['width'],
+                note='Keep both fragment proposals checked; the runtime amount is supplied by the font asset, not serialized into the text.'))
         elif kind=='plain':
             value=native_newlines(value,font.format)
             prepared,_=font.format.prepare(value,font_tags=c.get('tags',False))
@@ -192,8 +205,12 @@ def analyze_ui(project,font,asset,*,reflow=False,hyphenate=True,skip_japanese=Tr
     from .textcleanup import japanese_text
     catalog=get_catalog(project);view=copy(project);view.font_asset=asset
     before={identity:r['text'] for identity,r in project.ui_text_assets.items()};working=dict(before);changes=[];issues=[];checks=[]
+    for identity in before:
+        for contract in catalog.fields[identity].get('contracts',[]):
+            if contract['kind']=='composed_dialog':
+                for key in contract['members']:working.setdefault(key,catalog.fields[key]['original'])
     # All dependent groups and templates see the final normalized font strings.
-    for identity,text in before.items():
+    for identity,text in list(working.items()):
         try:working[identity]=ui_proposal(view,identity,text,font)['text']
         except ValueError as error:issues.append(dict(script_id=None,command_id=identity,reason=str(error)))
     context=profile_context(catalog,project.ui_text_assets);tip=None
@@ -215,10 +232,12 @@ def analyze_ui(project,font,asset,*,reflow=False,hyphenate=True,skip_japanese=Tr
                     assessment=[dict(line_count=len(rows),line_widths=widths,width=geometry['width'],columns=columns,normalization_only=True)]
             else:value,assessment=field_fit(identity,value,catalog,working,font,reflow=reflow,hyphenate=hyphenate,skip=skip,project=project)
             working[identity]=value
-            note='Native consumer checked: '+', '.join(dict.fromkeys(c['kind'] for c in f.get('contracts',[])))
+            note=('Retained compatibility text; no active Vita draw consumer.' if f['fit_policy']=='retained'
+                else 'Native consumer checked: '+', '.join(dict.fromkeys(c['kind'] for c in f.get('contracts',[]))))
+            if any(c['kind']=='composed_dialog' for c in f.get('contracts',[])):note+=' Keep both storage fragment proposals checked.'
             if f['fit_policy']=='profile_tips':note=f'Profile tips: {tip["width"]}px, {tip["columns"]} units, three rows. Keep the shared column-limit setting checked.' if tip else 'Profile tips: unchanged Japanese text'
             if f['fit_policy']=='layout_setting':note='Shared profile-tip column limit. Untouched original rows are preserved; keep checked with the wider tip proposals.'
-            checks.append(dict(field_id=identity,command_id=identity,ui_check=True,reason=note,assessment=assessment))
+            checks.append(dict(field_id=identity,command_id=identity,fit_policy=f['fit_policy'],ui_check=True,reason=note,assessment=assessment))
         except (ValueError,KeyError,IndexError,StopIteration,OSError) as error:
             issues.append(dict(script_id=None,command_id=identity,reason=str(error)))
             # Safe normalization can still be applied; failed wrapping is never exported.
@@ -234,6 +253,8 @@ def analyze_ui(project,font,asset,*,reflow=False,hyphenate=True,skip_japanese=Tr
 def validate_structure(field,text):
     """Check native non-display fields before storing a translation delta."""
     for c in field.get('contracts',[]):
+        if c['kind']=='composed_dialog' and c['joiner'] in text:
+            raise ValueError('The runtime amount glyph is inserted by the executable, not stored in either fragment')
         if c['kind']=='save_metadata' and c.get('max_units') and len(units(text))>=c['max_units']:
             raise ValueError(f'Platform metadata allows {c["max_units"]-1} UTF16 units plus its terminator')
         if c['kind']=='hex_color' and not re.fullmatch('[0-9a-fA-F]{6}',text):raise ValueError('Profile RGB field requires six hexadecimal digits')

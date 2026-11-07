@@ -172,9 +172,14 @@ In Auto-fit, select a UI row and use **Preview selected UI…** to render checke
 proposals before Apply. In **UI text…**, **Preview field…** also renders an unsaved
 draft. Both use the same effective font/assets as export without applying changes.
 MCP provides `get_ui_text_preview(field_id,plan_id)` for the same review.
-Overflow requires shortening when a consumer cannot wrap. `requires_context`
-identifies unresolved legacy/runtime layouts; it is not reported as a successful
-fit. Source-bound previews are static compositions, not emulator captures.
+Overflow requires shortening when a consumer cannot wrap. `retained` identifies
+compatibility strings without a drawn consumer in the audited Vita target;
+these remain editable/exportable and are not counted as visually fitted.
+Developer test captions use their native list layout and scene family `test`.
+The storage prompt's two fragments are fitted together; keep their proposals
+selected together. Font revision5 displays the native capacity append as7456
+through a bitmap-cache entry, without executable changes. Source-bound previews
+are static compositions, not emulator captures.
 UI text… retains Match font in draft for individual edits. MCP exposes
 renderer/font_guidance and format_ui_text. Verified dialog
 and profile response layouts keep proportional aliases. Fixed-cursor UI remains
