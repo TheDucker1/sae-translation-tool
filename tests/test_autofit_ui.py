@@ -18,6 +18,31 @@ from test_autofit_layouts import settings_fixture
 
 
 class AutoFitUiChecks(unittest.TestCase):
+    def test_tip_layout_and_wrapping_share_existing_transaction(self):
+        from test_composition_modes import profile_environment_fixture
+        from test_ui_text import global_fixture
+        from editor.compositionmodes import profile_environment
+        from editor.composition import EnvironmentLibrary
+        with tempfile.TemporaryDirectory(dir=ROOT/'.local') as tmp:
+            p,_,_,_=self.setup_project(Path(tmp)/'original');root=Path(p.root)
+            (root/'env/env_otaku_mode.dat').write_bytes(profile_environment_fixture(8))
+            (root/'env/env_global.dat').write_bytes(global_fixture())
+            (root/'env/env_game_utility.dat').write_bytes(bytes(3)+struct.pack('<i',27))
+            p._ui_text_catalog=None;c=get_catalog(p);identity='first.dat:3/0#s1'
+            font=font_fixture();font.utility=27;p._ui_style_font=((p.root,p.font_asset['manifest']['font_sha256']),font)
+            p.set_ui_texts([(identity,c.fields[identity]['original'],'A hostess plots her rise.')])
+            before=p.ui_text_assets.copy();history=len(p.undo_stack)
+            with patch('editor.fontpatch.effective_font',return_value=font):
+                plan=analyze_cleanup(p,font,settings_fixture(),command_ids=[])
+            self.assertFalse(plan['issues']);self.assertEqual(len(plan['ui_changes']),3)  # Also repairs the existing help label.
+            tip=next(item for item in plan['ui_changes'] if item['field_id']==identity)
+            self.assertEqual(tip['after_text'],'A hostess plots＿her rise.')
+            apply_cleanup(p,plan);self.assertEqual(len(p.undo_stack),history+1)
+            lib=EnvironmentLibrary(root,ui_text_assets=p.ui_text_assets,ui_text_catalog=c)
+            self.assertEqual(profile_environment(lib.read('env/env_otaku_mode.dat'))['columns'],16)
+            p.undo();self.assertEqual(p.ui_text_assets,before);p.redo()
+            self.assertEqual(p.ui_text_assets[identity]['text'],tip['after_text'])
+
     def setup_project(self,root):
         p,_,_=fixture(root);catalog=get_catalog(p);key='env/env_help_mgr.dat:#s0'
         p.set_ui_texts([(key,catalog.fields[key]['original'],'Ｍｏｖｅ now')])

@@ -75,6 +75,9 @@ UI text checks cover UTF16 lengths/non-BMP text, native quote/CRLF table handlin
 CP932/placeholder/protected-field rejection, atomic batches and source fingerprints,
 mixed script/UI Undo/reopen, effective environment reads, combined texture/script/
 catalogue/environment export with seek repair, and human/agent draft conflicts.
+Profile tips checks cover pixel/unit limits, word/hyphen wrapping, hard-break
+reflow, stable string IDs around a typed scalar edit, preserved original rows,
+atomic mixed UI/layout Undo/reopen and matching preview/export environment bytes.
 
 PVF preview checks distinguish full sampled cache cells from half-width draw
 advances, fractional packed-column widths, duplicate charset entries and cropped

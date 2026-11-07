@@ -210,7 +210,7 @@ class TranslationWorkspace:
             current=self.project.ui_text_assets.get(key,{}).get('text',f['original'])
             if not include_protected and not f['editable']:continue
             if category and category!=f['category'] or source and source!=f['source']:continue
-            if needle not in ' '.join((key,f['category'],f['renderer'],f['original'],current)).casefold():continue
+            if needle not in ' '.join((key,f['category'],f['role'],f['renderer'],f['fit_policy'],f['original'],current)).casefold():continue
             rows.append(dict(f,current=current,modified=key in self.project.ui_text_assets))
         return dict(revision=self.project.revision,fields=rows[start:start+limit],total=len(rows),next_start=start+limit if start+limit<len(rows) else None,
             categories=sorted({f['category'] for f in c.fields.values()}),inventory=c.summary())

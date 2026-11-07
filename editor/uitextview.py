@@ -49,7 +49,7 @@ class UiTextBrowser(QDialog):
         for identity,f in self.catalog.fields.items():
             current=self.project.ui_text_assets.get(identity,{}).get('text',f['original'])
             if not self.protected.isChecked() and not f['editable']:continue
-            if query not in ' '.join((identity,f['category'],f['role'],f['renderer'],f['original'],current)).casefold():continue
+            if query not in ' '.join((identity,f['category'],f['role'],f['renderer'],f['fit_policy'],f['original'],current)).casefold():continue
             rows.append((identity,f,current))
         self.table.blockSignals(True);self.table.setRowCount(len(rows));chosen=0
         for row,(identity,f,current) in enumerate(rows):
@@ -69,7 +69,7 @@ class UiTextBrowser(QDialog):
         self.expected=self.project.ui_text_assets.get(self.identity,{}).get('text',f['original']);self.revision=self.project.revision
         self.edit.setPlainText(self.expected);self.edit.setReadOnly(not f['editable'])
         self.apply.setEnabled(f['editable']);self.revert.setEnabled(self.identity in self.project.ui_text_assets)
-        self.note.setText(f.get('font_guidance',''))
+        self.note.setText(f.get('font_guidance','')+' Fit coverage: '+f['fit_policy']+'.')
         self.details.setPlainText(json.dumps(f,ensure_ascii=False,indent=2)+'\n\nInventory coverage / issues:\n'+json.dumps(self.catalog.summary(),ensure_ascii=False,indent=2))
 
     def commit(self,revert=False):

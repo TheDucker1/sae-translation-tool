@@ -113,6 +113,7 @@ class Span:
     role:str='UI text'
     editable:bool=True
     reason:str=''
+    bounds:tuple=()
 
 
 def counted_spans(data,parser):
@@ -121,9 +122,15 @@ def counted_spans(data,parser):
         if bytes(reader.data)!=data:raise ValueError('UI parser read from an untracked sub-buffer')
         spans[start]=Span(start,end,value,role=getattr(reader,'ui_role','UI text'))
     token=STRING_OBSERVER.set(observe)
-    try:parser(data)
+    try:result=parser(data)
     finally:STRING_OBSERVER.reset(token)
-    return [spans[k] for k in sorted(spans)]
+    result_spans=[spans[k] for k in sorted(spans)]
+    if getattr(parser,'__name__','')=='profile_environment':
+        # Append, rather than sort into strings: existing translation IDs stay stable.
+        at=result['columns_offset'];columns=result['columns']
+        result_spans.append(Span(at,at+4,str(columns),encoding='layout-u32',
+            role='Profile tips column limit',bounds=(columns,columns*2)))
+    return result_spans
 
 
 def table_spans(data,encoding,separator,kind):
@@ -171,6 +178,10 @@ def encode_span(span,text):
     if not isinstance(text,str):raise ValueError('UI text must be a string')
     if not span.editable:raise ValueError(span.reason or 'Protected non-display field')
     original=span.text.split('\0',1)[0]
+    if span.encoding=='layout-u32':
+        if not re.fullmatch(r'[0-9]{1,4}',text) or not span.bounds[0]<=int(text)<=span.bounds[1]:
+            raise ValueError(f'Layout column limit must be {span.bounds[0]}–{span.bounds[1]}')
+        return struct.pack('<I',int(text))
     if span.role.startswith('cg_titles') and not text:raise ValueError('CG title cannot be empty: native loading would drop its gallery entry')
     if '\0' in text:raise ValueError('Do not insert NUL in UI text')
     if len(text.encode('utf-16-le'))>8192:raise ValueError('UI text exceeds4096 UTF16-unit editing limit')
@@ -190,8 +201,8 @@ def encode_span(span,text):
 
 def rewrite(data,spans,replacements):
     out=bytearray(data)
-    for index,text in sorted(replacements.items(),reverse=True):
-        if type(index)!=int or not 0<=index<len(spans):raise ValueError('UI text field outside original schema')
+    if any(type(i)!=int or not 0<=i<len(spans) for i in replacements):raise ValueError('UI text field outside original schema')
+    for index,text in sorted(replacements.items(),key=lambda item:spans[item[0]].start,reverse=True):
         span=spans[index];encoded=encode_span(span,text)
         out[span.start:span.end]=encoded
     return bytes(out)

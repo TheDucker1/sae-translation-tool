@@ -77,9 +77,10 @@ class AutoFitDialog(QDialog):
                 if m and m['auto_edit']:status=status.replace('read-only','conversion only')
                 self.add_row(issue['script_id'],issue['command_id'],status,issue['reason'],issue,False)
             for change in self.plan['ui_changes']:
-                self.add_row(None,change['field_id'],'UI font',change['note'],change,True)
+                self.add_row(None,change['field_id'],'UI layout' if change['renderer']=='layout_setting' else 'UI text',change['note'],change,True)
             s=self.plan['summary'];self.status.setText(f"{s['scanned']} text commands scanned; {s['changed_commands']} script changes; {s['changed_ui_fields']} UI changes; +{s['inserted_commands']} commands; {s['reported']} reported/skipped. Mechanical hyphens are not language-specific syllabification.")
             self.status.setText(self.status.text()+(' Font asset update pending.' if self.plan.get('font_changed') else ''))
+            if s.get('ui_font_only'):self.status.setText(self.status.text()+f" {s['ui_font_only']} UI fields have font normalization only; their fit geometry is not implemented.")
             self.apply_button.setText('Apply font update + checked text' if self.plan.get('font_changed') else 'Apply checked changes')
             self.apply_button.setEnabled(bool(self.plan['changes'] or self.plan['ui_changes']) or self.plan.get('font_changed',False))
             if self.font_note:self.review.setPlainText(self.font_note)

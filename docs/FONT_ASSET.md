@@ -78,6 +78,11 @@ translator intended or introduce pair-specific kerning.
 - Original Japanese glyph records/atlas are retained. ASCII word spaces become
   shorter globally, which can affect spacing/centering elsewhere.
 - This uses per-glyph optical spacing, not kerning pairs or complex shaping.
+  The original typeface was designed for fixed cells. Cropping its ink does not
+  recreate proportional bearings: letters such as `j` can still leave visible
+  gaps around their stems. The cached asset format supplies no independent
+  horizontal bearing or pair-kerning field. This is not fully typeset Latin text;
+  a different Latin glyph design could improve its appearance further.
   Non-ASCII Latin extensions are not generally supported by the script encoding.
 - Existing authored breaks stay hard unless Reflow existing line breaks is enabled.
   Timed text can use verified space padding with intact directive times. Queued

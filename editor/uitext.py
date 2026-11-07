@@ -71,6 +71,7 @@ class UiTextCatalog:
             spans=spans,sha256=sha(data),parser=parser,table=table)
         self.nodes[node_id]=node
         from .fontstyle import ui_renderer,NOTES
+        from .uifit import fit_policy
         for i,span in enumerate(spans):
             identity=node_id+'#s'+str(i)
             renderer=ui_renderer(name,span.role,i,span.editable)
@@ -78,15 +79,19 @@ class UiTextCatalog:
                 role=span.role,original=span.text.split('\0',1)[0],editable=span.editable,reason=span.reason,
                 encoding=span.encoding,offset=span.start,bytes=span.end-span.start,
                 renderer=renderer,font_guidance=NOTES.get(renderer,'Protected non-display syntax.'),
+                fit_policy=fit_policy(span.role,renderer,span.editable),
                 format_tokens=re.findall(r'%(?:%|[^%\s]*?[diuoxXfFeEgGaAcCsSpn])|≪[^≫]*≫|[①-⑳]',span.text),
-                guidance='Preserve format/control tokens. UI DrawString does not word-wrap automatically. Dialog/description authored breaks use ＿; preview the relevant screen.')
+                guidance=(f'Typed column setting: {span.bounds[0]}–{span.bounds[1]}; Auto-fit chooses it with the profile tips.' if span.bounds else
+                    'Preserve format/control tokens. UI DrawString does not word-wrap automatically. Profile tips have Auto-fit; other UI fields currently normalize font only. Dialog/description authored breaks use ＿; preview the relevant screen.'))
         self.coverage.append(dict(source=name,route=list(route),category=category,fields=len(spans),status='Parsed'))
 
     def summary(self):
         return dict(fields=len(self.fields),editable=sum(f['editable'] for f in self.fields.values()),coverage=self.coverage,issues=self.issues,
             renderer_counts={kind:sum(f['renderer']==kind for f in self.fields.values()) for kind in sorted({f['renderer'] for f in self.fields.values()})},
+            fit_policy_counts={kind:sum(f['fit_policy']==kind for f in self.fields.values()) for kind in sorted({f['fit_policy'] for f in self.fields.values()})},
             notes=['Scenario opcode text remains in the script editor.',
                 'Baked texture lettering uses PNG replacements; executable literals and personal-save text are not asset fields.',
+                'fit_policy distinguishes profile-tip fitting from font-only normalization and unverified consumers. Other UI fit geometry is not implemented.',
                 'Known source schemas are parsed; coverage is not a claim of every native screen being playtested.'])
 
 
@@ -142,6 +147,8 @@ def validate_records(records,c):
 
 def effective_node(c,node_id,records,data=None):
     n=c.nodes[node_id];edits={f['index']:records[key]['text'] for key,f in c.fields.items() if f['node_id']==node_id and key in records}
+    from .uifit import preserved_tip_edits,validate_tips
+    preserved_tip_edits(c,n,records,edits)
     if not edits:return n['data'] if data is None else data
     original=n['data']
     if data is not None and data!=original:raise ValueError('Overlapping UI text/other asset edit at '+node_id)
@@ -152,6 +159,7 @@ def effective_node(c,node_id,records,data=None):
     if len(spans)!=len(n['spans']):raise ValueError('UI text edits changed the native field structure')
     for i,text in edits.items():
         if spans[i].text.split('\0',1)[0]!=text:raise ValueError('UI text rewrite did not roundtrip')
+    validate_tips(c,n,records,spans)
     if n['source'].endswith('env_otaku_mode.dat'):
         from .compositionmodes import profile_environment
         e=profile_environment(result);labels=e['labels'];pattern=e['format']
@@ -167,6 +175,10 @@ def prepare(records,root,catalog=None):
     if not records:return {},[],None
     c=catalog or build_catalog(root);validate_records(records,c);changes={};rows=[]
     nodes={c.fields[key]['node_id'] for key in records}
+    from .uifit import profile_context
+    context=profile_context(c,records)
+    if context and context['columns']!=context['original']:
+        nodes.update(n['id'] for n in c.nodes.values() if n['table'] and n['table'][2]=='profile_items')
     for node_id in sorted(nodes):
         n=c.nodes[node_id];result=effective_node(c,node_id,records)
         if result!=n['data']:changes.setdefault(n['source'],[]).append((n['chain'],result))

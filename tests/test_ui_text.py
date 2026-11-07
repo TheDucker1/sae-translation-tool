@@ -11,7 +11,7 @@ from editor.scriptcodec import string,Reader
 from editor.uitextcodec import Span,counted_spans,table_spans,rewrite,encode_span,save_text
 from editor.uitext import build_catalog,get_catalog,effective_node,prepare
 from editor.packing import Member,pack_members,repack,payload
-from editor.gameexport import export_game,ExportError
+from editor.gameexport import export_game,ExportError,prepare_archives
 from editor.seekwriter import relocate
 from editor.composition import EnvironmentLibrary
 from editor.textureassets import encode_png
@@ -23,6 +23,10 @@ from test_texture_export import rgba_image
 
 def pack(data):return pack_members([Member(str(i).encode(),0,v) for i,v in enumerate(data)])
 def word(n):return struct.pack('<I',n)
+
+def global_fixture():
+    return (bytes(3)+string('Global')*4+bytes(8)+string('UI')*9+bytes(120)+word(0)+bytes(32)
+        +word(0)+bytes(16)+word(0)+word(0)+string(' ')+bytes(8)+string('Yes')+string('No')+string('＿'))
 def items(texts):return word(len(texts))+b''.join(word(i)+string(v) for i,v in enumerate(texts))
 def rows(values):return word(len(values))+b''.join(items(v) for v in values)
 def help_fixture():
@@ -47,6 +51,43 @@ def fixture(root):
 class UiText(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
+
+    def test_typed_tip_columns_preserve_original_rows_and_export_bytes(self):
+        from test_composition_modes import profile_environment_fixture
+        from editor.compositionmodes import profile_environment,description_lines,profile_separator
+        from editor.uitextcodec import counted_spans
+        with tempfile.TemporaryDirectory(dir=ROOT/'.local') as tmp:
+            folder=Path(tmp);p,_,_=fixture(folder/'original');root=Path(p.root)
+            raw=profile_environment_fixture(8);(root/'env/env_otaku_mode.dat').write_bytes(raw)
+            (root/'env/env_global.dat').write_bytes(global_fixture())
+            (root/'env/env_game_utility.dat').write_bytes(bytes(3)+struct.pack('<i',27))
+            # The normal parser registers the scalar after strings, preserving IDs.
+            c=get_catalog(p);self.assertFalse(c.issues)
+            setting=next(f for f in c.fields.values() if f['role']=='Profile tips column limit')
+            before=(p.revision,p.ui_text_assets)
+            with self.assertRaisesRegex(ValueError,'column limit'):
+                p.set_ui_texts([(setting['field_id'],'8','17')])
+            self.assertEqual((p.revision,p.ui_text_assets),before)
+            label=next(f for f in c.fields.values() if f['source'].endswith('env_otaku_mode.dat') and f['original']=='Before')
+            p.set_ui_texts([(setting['field_id'],'8','16'),(label['field_id'],'Before','A much longer label')])
+            self.assertEqual(c.fields['first.dat:3/0#s1']['fit_policy'],'profile_tips')
+            self.assertEqual(c.fields['env/env_help_mgr.dat:#s0']['fit_policy'],'font_only')
+            library=EnvironmentLibrary(root,ui_text_assets=p.ui_text_assets,ui_text_catalog=c)
+            env=library.read('env/env_otaku_mode.dat');self.assertEqual(profile_environment(env)['columns'],16)
+            self.assertIn('A much longer label',[s.text for s in counted_spans(env,profile_environment)])
+            changes,_,_=prepare(p.ui_text_assets,p.root,c)
+            self.assertEqual(changes['env/env_otaku_mode.dat'][0][1],env)
+            separator=profile_separator(library)
+            from editor.uitextcodec import table_spans
+            rewritten=changes['first.dat'][0][1]
+            original=c.nodes['first.dat:3/0']['spans'][1].text
+            current=table_spans(rewritten,'utf-16-le','\t','profile_items')[1].text
+            self.assertEqual(description_lines(original,separator,8),description_lines(current,separator,16))
+            saved=folder/'tips.saekano.json';p.save(saved);loaded=Project.load(saved,p)
+            self.assertEqual(loaded.ui_text_assets,p.ui_text_assets)
+            p.undo();self.assertFalse(p.ui_text_assets);p.redo()
+            compiled=prepare_archives(p)
+            self.assertEqual(compiled['files']['env/env_otaku_mode.dat'],env)
 
     def test_counted_and_quoted_native_roundtrip_and_protected_syntax(self):
         data=bytes(3)+b''.join(string('Saved: %ls' if i==0 else 'Other') for i in range(56))

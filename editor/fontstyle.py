@@ -9,11 +9,13 @@ LAYOUT='measured_layout'
 UNKNOWN='consumer_unverified'
 NOTES={FIXED:'Native DrawString uses fixed cells. The upgraded font supplies readable Latin bitmap letters in those cells; spacing remains fixed.',
        LAYOUT:'Native layout uses measured glyph advances. The selected proportional font aliases are supported.',
+       'layout_setting':'Typed asset layout setting, not translated display text. Auto-fit derives its safe range from the original layout.',
        UNKNOWN:'The renderer for this field is not verified; font normalization is unavailable.'}
 
 
 def ui_renderer(source,role,index,editable=True):
     if not editable:return 'protected'
+    if role=='Profile tips column limit':return 'layout_setting'
     if role=='dialog prompt' or role.startswith('profile_responses'):return LAYOUT
     if role=='fixed UI label':return FIXED
     if role.startswith(('profile_items','cg_titles')) or role=='button choices':return FIXED

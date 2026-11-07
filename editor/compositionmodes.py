@@ -25,7 +25,8 @@ def profile_environment(data):
     e['arrows'] = [[sp() for _ in range(2)] for _ in range(2)]; e['event_buttons'] = [words(4) for _ in range(2)]
     e['itemframe'], e['positions'], e['selector'], e['categories'] = sp(), table(lambda: words(2)), sp(), table(sp)
     e['label_offset'], e['label_scale'] = words(2), r.word('f'); r.take(12); e['carousel'] = r.word('i')
-    e['description_positions'] = table(lambda: words(2)); e['description_scale'], e['columns'] = r.word('f'), r.word()
+    e['description_positions'] = table(lambda: words(2)); e['description_scale'] = r.word('f')
+    e['columns_offset'] = r.pos; e['columns'] = r.word()
     e['footer'] = sp(); r.take(36); e['result_progress'] = r.word('i'); r.take(8); r.string()
     table(lambda: (r.string(), r.word())); r.string(); r.take(4); e['reflection'] = sp()
     e['labels'] = [table(r.string) for _ in range(3)]; e['format'] = r.string()

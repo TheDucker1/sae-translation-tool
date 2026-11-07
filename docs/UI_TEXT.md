@@ -18,7 +18,9 @@ Text baked into an image remains in **Images…**; edit its PNG instead.
    **Match font in draft** previews that selected-field conversion. Batch font
    repair is part of **Auto-fit text…**, with **Include translated UI text** enabled
    by default. Script/UI proposals and a readable bitmap font upgrade share one
-   review and atomic Apply/Undo. Untouched original field values are retained.
+   review and atomic Apply/Undo. Profile-tip fitting also proposes a shared,
+   bounded column-limit asset setting. When it changes, untouched original
+   descriptions receive explicit separators to preserve their existing rows.
 5. In **Images… → UI compositions…**, preview supported screens with current
    UI strings and textures. The layout controls select the screen/state; they do
    not automatically reconstruct a running game. Use original textures compares
@@ -53,10 +55,20 @@ is rejected; your draft remains available until you reselect/Refresh.
 - Native UI text generally does **not** word-wrap. Dialog/description strings
   use their authored separators; ordinary UI labels do not become multiline just
   by typing LF. Preview the appropriate screen and keep translations concise.
-  This browser does not auto-fit UI text or alter rectangles/font metrics.
+  **Auto-fit text…** fits translated profile descriptions using the original
+  panel width, three rows and native half/full-cell advances. It proposes the
+  shared character cap as a typed asset field; keep that checked with the tips.
+  Enable **Reflow existing line breaks** to remove older narrow breaks. Default
+  fitting preserves explicit breaks. Wider tips and the bounded setting are
+  serialized into the exported game assets; preview reads those same bytes.
   Preview glyphs use the player's PVF cache-cell sampling and half/full-width
   draw geometry; Qt outline antialiasing can still differ from the game.
-- Each field exposes `renderer` and `font_guidance`. `measured_layout` supports
+- Each field exposes `renderer`, `font_guidance` and searchable `fit_policy`.
+  `profile_tips` has fitting support; `font_only` means only font normalization
+  is implemented, not verified box fitting. `consumer_unverified` needs analysis.
+  The catalog reports counts and Auto-fit reports selected font-only UI fields.
+  `layout_setting` is a bounded numeric asset field, not a translated label.
+  `measured_layout` supports
   proportional aliases. `fixed_cursor` uses ordinary Latin because its native
   cursor ignores variable bitmap widths. `consumer_unverified` retains text
   during font repair and needs consumer analysis. Search those names to review
@@ -71,6 +83,11 @@ The inventory reports known schema coverage and errors explicitly. Text inside
 an executable, user-created save content and lettering baked into textures are
 not counted as editable environment fields. Exposing a field is not a claim
 that every screen/state has been visually playtested.
+
+Platform trophy text is outside the USRDIR inventory. Its localized names and
+descriptions are stored in the separate `sce_sys/trophy` package, rendered by
+the platform/emulator rather than the game font. This tool does not yet edit or
+export that package. Modified-package acceptance on physical Vita is unverified.
 
 ## Agent workflow
 
