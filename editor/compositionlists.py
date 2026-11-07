@@ -22,9 +22,9 @@ def slot_environment(data):
     rd('sprite', 0x330); rd('sprite', 0x354); rd('point', 0x378); many('sprite', 0x380, 4, 36)
     rd('point', 0x410); many('color', 0x418, 2); rd('colors', 0x420); rd('colors', 0x430)
     many('scalar', 0x440, 2); rd('point', 0x448); rd('rect', 0x450); many('scalar', 0x460, 2)
-    many('string', 0x468, 6, 56)
+    e.r.ui_role='fixed UI label';many('string', 0x468, 6, 56)
     e.string_tables[0x5b8] = [e.r.string() for _ in range(e.r.count())]
-    many('string', 0x5c8, 11, 56)
+    e.r.ui_role='dialog prompt';many('string', 0x5c8, 11, 56);e.r.ui_role='UI text'
     return e.finish()
 
 
@@ -200,7 +200,8 @@ def backlog_environment(data):
     e.voices = [sprite(e.r, False) for _ in range(e.r.count())]
     rd('scalar', 0xc118); rd('sprite', 0xc11c); rd('sprite', 0xc140); rd('rect', 0xc164)
     many('scalar', 0xc174, 12); many('color', 0xc1a4, 3); rd('ints', 0)
-    e.question = e.r.string(); e.text_colors = [color(e.r.word()) for _ in range(e.r.count())]
+    from .uitextcodec import ui_string
+    e.question = ui_string(e.r,'dialog prompt'); e.text_colors = [color(e.r.word()) for _ in range(e.r.count())]
     if not 0 < e.floating(0xc180) <= 16 or not 1 <= e.signed(0xc188) <= 3 or len(e.voices) < 2:
         raise ImageError('Invalid backlog layout capacity or text scale')
     return e.finish()

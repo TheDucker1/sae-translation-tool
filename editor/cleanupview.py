@@ -18,7 +18,7 @@ class AutoFitDialog(QDialog):
         self.reflow.setToolTip('Treat existing dialogue breaks as spaces before fitting. Enable to repair text previously fitted to the wrong width. Leave off to preserve deliberate breaks.')
         layout.addWidget(self.reflow)
         self.full_width=QCheckBox('Full-width Latin for readability (convert, then fit)')
-        self.full_width.setToolTip('Optional for the current PVF player: wider supported Latin glyphs. Controls, spaces and reserved breaks are preserved; extra pages may be needed.')
+        self.full_width.setToolTip('Convert supported Latin before fitting. With a proportional font selected, measured text uses its aliases and fixed-cursor labels use ordinary Latin. Controls and reserved breaks are preserved.')
         layout.addWidget(self.full_width)
         self.proportional=QCheckBox('Proportional dialogue font asset (Vita + PC; no executable changes)')
         self.proportional.setChecked(bool(self.project.font_asset));self.proportional.setToolTip('Generate and save/export a Font.gsf bitmap override. Refit selected dialogue using those widths; speaker/UI DrawString spacing remains fixed. Undo restores font plus text.')

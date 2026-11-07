@@ -25,6 +25,27 @@ The older **Full-width Latin** option alone uses wider fixed cells. The
 proportional-font option additionally supplies variable-width bitmap glyphs and
 uses them when fitting. Speaker text stays unchanged during that conversion.
 
+The active game font has two cursor behaviours. Dialogue, battle text, results
+and verified dialog/profile-response layouts use measured advances. Choices,
+help, menu labels and profile descriptions use fixed half/full cells even when
+the bitmap glyph has a different width. Full-width proportional aliases on those
+fixed paths caused widely separated letters and incorrect centering.
+
+With a proportional font selected, text-form Apply, MCP translation edits and
+Auto-fit now restore ordinary Latin in fixed-cursor script labels. Run Auto-fit
+again to repair existing choice/topic/caption strings. The dialogue aliases stay
+in their measured layouts. In UI text…, use Match font in draft before Apply or
+Repair font in translated UI for existing environment/help/catalogue edits.
+New UI translations match verified consumers on Apply automatically. Save and
+export a new copy after either repair.
+
+These repairs select compatible text aliases. Fixed-cursor UI remains monospaced.
+The selected font's shorter ASCII-space measurement can still cause a small
+centering difference in fixed UI. Assets cannot supply proportional cursor steps
+to that active DrawString path. Unverified consumers are labeled explicitly and
+retain their text during repair. Input glyphs, placeholders, native separators,
+hidden suffixes and original untouched fields are preserved.
+
 ## Existing font updates
 
 With a saved font project, keep the proportional option checked and analyze again.

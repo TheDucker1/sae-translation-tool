@@ -5,6 +5,7 @@ from .compositioncommon import cached
 from .compositionlists import backdrop_sprite, button_help, help_environment
 from .imagecodec import ImageError
 from .text import units
+from .uitextcodec import ui_string
 
 
 def settings_environment(data):
@@ -27,7 +28,7 @@ def settings_environment(data):
     many('sprite', 0x3f4, 4, 36); rd('sprites', 0x484); rd('rect', 0x494)
     many('scalar', 0x4a4, 3); rd('point', 0x4b0); many('sprite', 0x4b8, 3, 36)
     many('rect', 0x524, 3, 16); rd('sprite', 0x554); rd('sprite', 0x578); rd('point', 0x59c)
-    e.save_question = r.string()
+    e.save_question = ui_string(r,'dialog prompt')
     return e.finish()
 
 

@@ -29,6 +29,8 @@ class UiTextBrowser(QDialog):
         footer=QHBoxLayout();layout.addLayout(footer)
         self.apply=QPushButton('Apply field');self.apply.clicked.connect(self.commit);footer.addWidget(self.apply)
         self.revert=QPushButton('Revert field');self.revert.clicked.connect(lambda:self.commit(True));footer.addWidget(self.revert)
+        match=QPushButton('Match font in draft');match.clicked.connect(self.match_font);footer.addWidget(match)
+        repair=QPushButton('Repair font in translated UI');repair.clicked.connect(self.repair_font);footer.addWidget(repair)
         self.note=QLabel();self.note.setWordWrap(True);footer.addWidget(self.note,1)
 
     def refresh(self):
@@ -48,7 +50,7 @@ class UiTextBrowser(QDialog):
         for identity,f in self.catalog.fields.items():
             current=self.project.ui_text_assets.get(identity,{}).get('text',f['original'])
             if not self.protected.isChecked() and not f['editable']:continue
-            if query not in ' '.join((identity,f['category'],f['role'],f['original'],current)).casefold():continue
+            if query not in ' '.join((identity,f['category'],f['role'],f['renderer'],f['original'],current)).casefold():continue
             rows.append((identity,f,current))
         self.table.blockSignals(True);self.table.setRowCount(len(rows));chosen=0
         for row,(identity,f,current) in enumerate(rows):
@@ -68,6 +70,7 @@ class UiTextBrowser(QDialog):
         self.expected=self.project.ui_text_assets.get(self.identity,{}).get('text',f['original']);self.revision=self.project.revision
         self.edit.setPlainText(self.expected);self.edit.setReadOnly(not f['editable'])
         self.apply.setEnabled(f['editable']);self.revert.setEnabled(self.identity in self.project.ui_text_assets)
+        self.note.setText(f.get('font_guidance',''))
         self.details.setPlainText(json.dumps(f,ensure_ascii=False,indent=2)+'\n\nInventory coverage / issues:\n'+json.dumps(self.catalog.summary(),ensure_ascii=False,indent=2))
 
     def commit(self,revert=False):
@@ -80,3 +83,23 @@ class UiTextBrowser(QDialog):
                 self.expected=text;self.revision=self.project.revision;self.textChanged.emit(previous)
             self.set_project(self.project,force=True)
         except (ValueError,RuntimeError,OSError) as error:self.note.setText(str(error))
+
+    def match_font(self):
+        if self.identity is None:return
+        try:
+            from .fontstyle import ui_proposal
+            proposal=ui_proposal(self.project,self.identity,self.edit.toPlainText(),None)
+            self.edit.setPlainText(proposal['text']);self.note.setText(proposal['note']+' Apply field to save this draft.')
+        except (ValueError,KeyError,OSError) as error:self.note.setText(str(error))
+
+    def repair_font(self):
+        try:
+            from .fontstyle import translated_ui_edits,unverified_ui_fields
+            self.owner.guard_edit_snapshot(self.project,self.revision)
+            if self.identity and self.edit.toPlainText()!=self.expected:raise ValueError('Apply or revert the current draft before repairing translated UI fields.')
+            previous=self.project.revision;edits=translated_ui_edits(self.project)
+            if edits and self.project.set_ui_texts(edits):self.textChanged.emit(previous)
+            self.set_project(self.project,force=True)
+            remaining=len(unverified_ui_fields(self.project))
+            self.note.setText(f'{len(edits)} translated UI fields matched to their renderer. {remaining} translated fields have an unverified consumer. Undo restores the batch. Fixed-cursor text retains fixed spacing.')
+        except (ValueError,RuntimeError,KeyError,OSError) as error:self.note.setText(str(error))

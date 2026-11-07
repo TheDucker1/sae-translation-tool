@@ -65,7 +65,7 @@ class AutoFitLayouts(unittest.TestCase):
 
     def test_fixed_cursor_labels_are_checked_with_a_proportional_font(self):
         p=fixture();args=template(0x65,'s0:c6');args['choices'][0]['label']='Short label'
-        args['choices'].append({**deepcopy(args['choices'][0]),'label':'Hi'})
+        args['choices'].append({**deepcopy(args['choices'][0]),'label':'Ｈｉ'})
         uid=p.add(0,6,0x65,args);p.font_asset={'synthetic':True}
         font=deepcopy(self.font);font.cached={c:(0,0,0,2,36) for c in 'Shortlabel'}
         with patch('editor.fontpatch.effective_font',return_value=font):
@@ -73,7 +73,7 @@ class AutoFitLayouts(unittest.TestCase):
         self.assertTrue(plan['issues']);self.assertIn('Single-line',plan['issues'][0]['reason'])
         self.assertNotIn('proportional dialogue font asset cannot',plan['issues'][0]['reason'])
         self.assertEqual(plan['changes'][0]['pages'][0]['choices'][0]['label'],'Short label')
-        self.assertEqual(plan['changes'][0]['pages'][0]['choices'][1]['label'],'Ｈｉ')
+        self.assertEqual(plan['changes'][0]['pages'][0]['choices'][1]['label'],'Hi')
 
     def test_timed_padding_reproduces_words_without_changing_directives(self):
         text='A「One two three four《SP QUE,1,2700》 five six seven eight.」'

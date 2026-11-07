@@ -150,7 +150,14 @@ in all three current bubble fill textures, including crop, scale, anchors, line
 offsets, pulse minimum and ruby height. It is conservative about curved edges.
 The report includes the selected layout, width, safe capacity and region metadata.
 Fixed-position labels use their own cursor advances even with a proportional
-dialogue font. A rejected field is reported individually; other fitting fields
+dialogue font. With that font selected, their Latin aliases are restored to
+ordinary ASCII automatically rather than using proportional full-width aliases.
+Run Auto-fit again to repair labels from older projects. For non-script labels,
+UI text… offers Match font in draft and Repair font in translated UI. MCP exposes
+renderer/font_guidance, format_ui_text and repair_ui_text_font. Verified dialog
+and profile response layouts keep proportional aliases. Fixed-cursor UI remains
+monospaced; unverified consumers retain text with an explicit capability notice.
+A rejected field is reported individually; other fitting fields
 in the command remain eligible. Single-line labels that are too long need shortening.
 For older projects with timed breaks, undo timed wrapping or replace breaks with spaces
 while keeping its SP QUE directive; character-based wrapping may split words.

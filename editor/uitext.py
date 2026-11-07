@@ -70,17 +70,21 @@ class UiTextCatalog:
         node=dict(id=node_id,source=name,route=list(route),chain=chain,category=category,data=data,
             spans=spans,sha256=sha(data),parser=parser,table=table)
         self.nodes[node_id]=node
+        from .fontstyle import ui_renderer,NOTES
         for i,span in enumerate(spans):
             identity=node_id+'#s'+str(i)
+            renderer=ui_renderer(name,span.role,i,span.editable)
             self.fields[identity]=dict(field_id=identity,node_id=node_id,index=i,source=name,route=list(route),category=category,
                 role=span.role,original=span.text.split('\0',1)[0],editable=span.editable,reason=span.reason,
                 encoding=span.encoding,offset=span.start,bytes=span.end-span.start,
+                renderer=renderer,font_guidance=NOTES.get(renderer,'Protected non-display syntax.'),
                 format_tokens=re.findall(r'%(?:%|[^%\s]*?[diuoxXfFeEgGaAcCsSpn])|≪[^≫]*≫|[①-⑳]',span.text),
                 guidance='Preserve format/control tokens. UI DrawString does not word-wrap automatically. Dialog/description authored breaks use ＿; preview the relevant screen.')
         self.coverage.append(dict(source=name,route=list(route),category=category,fields=len(spans),status='Parsed'))
 
     def summary(self):
         return dict(fields=len(self.fields),editable=sum(f['editable'] for f in self.fields.values()),coverage=self.coverage,issues=self.issues,
+            renderer_counts={kind:sum(f['renderer']==kind for f in self.fields.values()) for kind in sorted({f['renderer'] for f in self.fields.values()})},
             notes=['Scenario opcode text remains in the script editor.',
                 'Baked texture lettering uses PNG replacements; executable literals and personal-save text are not asset fields.',
                 'Known source schemas are parsed; coverage is not a claim of every native screen being playtested.'])

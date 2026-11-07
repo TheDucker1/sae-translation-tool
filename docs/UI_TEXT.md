@@ -14,6 +14,10 @@ Text baked into an image remains in **Images…**; edit its PNG instead.
    format/control tokens, constraints and inventory coverage/issues.
 4. Edit the translation and choose **Apply field**. **Revert field** restores the
    original. Normal Undo/Redo includes script, font, texture and UI text changes.
+   With a proportional font selected, Apply matches the field's verified renderer.
+   **Match font in draft** previews that conversion. **Repair font in translated
+   UI** repairs existing translated fields in one Undo after the current draft is
+   applied/reverted. It retains untouched original fields.
 5. In **Images… → UI compositions…**, preview supported screens with current
    UI strings and textures. The layout controls select the screen/state; they do
    not automatically reconstruct a running game. Use original textures compares
@@ -51,6 +55,12 @@ is rejected; your draft remains available until you reselect/Refresh.
   This browser does not auto-fit UI text or alter rectangles/font metrics.
   Preview glyphs use the player's PVF cache-cell sampling and half/full-width
   draw geometry; Qt outline antialiasing can still differ from the game.
+- Each field exposes `renderer` and `font_guidance`. `measured_layout` supports
+  proportional aliases. `fixed_cursor` uses ordinary Latin because its native
+  cursor ignores variable bitmap widths. `consumer_unverified` retains text
+  during font repair and needs consumer analysis. Search those names to review
+  each group. Fixed-cursor labels remain monospaced; shorter space measurement
+  in the dialogue font can still affect their centering slightly.
 - CG titles cannot be empty because native catalogue loading would omit the
   entry. Combined profile-result text is checked against its native buffer.
   Other fields have a4096 UTF16-unit editing limit; this is not a promise they
@@ -63,7 +73,7 @@ that every screen/state has been visually playtested.
 
 ## Agent workflow
 
-Restart the existing MCP server/client for version1.5. No new dependencies or
+Restart the existing MCP server/client for version1.6. No new dependencies or
 engine build are required. Standalone and GUI-hosted modes use the same fields:
 
 1. `list_ui_text(query,category,source,include_protected,start,limit)` discovers
@@ -75,6 +85,11 @@ engine build are required. Standalone and GUI-hosted modes use the same fields:
    `field_id`, exact `expected_text`, and `translation`. A failed member rejects
    the whole batch. Missing/changed source, stale revisions and protected fields
    reject without a partial commit.
+   With a proportional font selected, verified font aliases are matched on Apply.
+   `applied_text` returns the actual stored values. `format_ui_text(field_id,text)`
+   proposes the conversion without editing and reports renderer capability.
+   `repair_ui_text_font(expected_revision)` repairs existing translated UI fields
+   atomically and lists `unverified_fields` that retain their text.
 4. `get_ui_scene` / `get_ui_scene_layers(kind="text")` reflect the translated
    strings in supported layouts. Static preview parameters remain explicit.
 5. Use normal `undo`, `redo`, `save_project` and, when requested,

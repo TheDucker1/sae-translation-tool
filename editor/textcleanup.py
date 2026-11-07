@@ -199,6 +199,8 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
                 if not details:continue
                 pages=[args];capacity=None;warnings=[]
                 if asset:warnings.append('Asset-only proportional dialogue font: Font.gsf is saved/exported with this project. Existing Japanese glyphs are retained; ASCII word spaces become shorter globally. Speaker/simple UI strings still use fixed cursor spacing.')
+                if any(d.get('font_style') and d['font_style']['changed'] for d in details):
+                    warnings.append('Fixed-cursor label aliases restored to ordinary Latin. Native cursor spacing remains fixed.')
                 if convert_width:
                     conversions=[p['full_width_conversion'] for p in details]
                     count=sum(p['converted_characters'] for p in conversions)

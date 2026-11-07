@@ -92,6 +92,7 @@ def full_width_text(value,font,*,controls=True,preserve_speaker=False):
 class TextLayoutService:
     def __init__(self,font,settings,*,project=None,script_id=None,command=None,regions=None):
         self.font=font;self.settings=settings;self.command=command
+        self.proportional=bool(getattr(project,'font_asset',None) or getattr(font,'asset_sha256',None))
         # Battle ownership is established while loading the file, before Start.
         self.mode='battle' if project is not None and any(c.opcode==0x3ef for c in project.scripts[script_id].commands) else 'ordinary'
         self.regions=regions
@@ -266,10 +267,14 @@ class TextLayoutService:
             return result
 
     def _wrap(self,opcode,value,*,field,width,dialogue_mode,hyphenate,full_width_latin,preserve_speaker,reflow):
-        original=value;conversion=None
+        original=value;conversion=None;style=None
         if reflow and supports_breaks(opcode):value=reflow_breaks(value,self.font.format)
         timed=opcode==0x64 and bool(self.font.format.ordinary(value)['markers'])
-        if full_width_latin:
+        if self.proportional and not supports_breaks(opcode):
+            from .fontstyle import match_style,FIXED
+            style=match_style(value,self.font,FIXED);value=style['text']
+            if full_width_latin:conversion=dict(converted_characters=0,preserved_ascii='')
+        elif full_width_latin:
             conversion=full_width_text(value,self.font,controls=opcode in {0x64,0x3f2,0x3f8},preserve_speaker=preserve_speaker and opcode==0x64)
             value=conversion['text'];conversion={k:v for k,v in conversion.items() if k!='text'}
         spec=self.dimensions(opcode,field=field,value=value,width=width,dialogue_mode=dialogue_mode);f=self.font.format
@@ -279,7 +284,7 @@ class TextLayoutService:
             extent=self.label_width(source,spec['scale'])
             if extent>spec['width']:raise ValueError(f"Single-line label/caption is {extent}px wide, exceeding {spec['width']}px; shorten it. This renderer does not support line breaks.")
             return dict(text=source,editor_text=source,changed=source!=original,full_width_conversion=conversion,inserted_breaks=0,line_count=1,
-                        lines=[source],line_widths=[extent],break_character=None,breaks_supported=False,**spec)
+                        lines=[source],line_widths=[extent],break_character=None,breaks_supported=False,font_style=style,**spec)
         source,body,pairs,ruby=self.projection(opcode,value,geometry_only=timed);limit=spec['width'];scale=spec['scale']
         def advance(c):
             other=f.tokens[4][1] if c==f.tokens[4][0] else c

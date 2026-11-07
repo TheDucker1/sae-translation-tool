@@ -13,7 +13,8 @@ def extras_environment(data):
     table = lambda fn: [fn() for _ in range(r.count())]
     colors = words(3); header = words(2); shared = [sprite(r) for _ in range(2)]; stretch = words(2)
     shared.extend(sprite(r) for _ in range(4)); cancel = words(4); counters = [words(2) for _ in range(2)]
-    shared_scale = r.word('f'); value, fade = words(2); prompt = r.string(); backdrop = sprite(r)
+    from .uitextcodec import ui_string
+    shared_scale = r.word('f'); value, fade = words(2); prompt = ui_string(r,'dialog prompt'); backdrop = sprite(r)
     headers, buttons = [sprite(r) for _ in range(4)], [sprite(r) for _ in range(4)]
     marker = sprite(r); offset = r.word('i'); rects = table(lambda: table(lambda: words(4)))
     labels = table(r.string); text_scale = r.word('f'); text_position = words(2); columns = r.word()

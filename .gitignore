@@ -48,6 +48,7 @@ Thumbs.db
 !/tests/test_pvf_preview.py
 !/tests/test_width_controls.py
 !/tests/test_autofit_layouts.py
+!/tests/test_fontstyle.py
 
 # Original/extracted game assets, native evidence and generated translations.
 GAMEFILE/

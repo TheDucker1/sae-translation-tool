@@ -109,7 +109,7 @@ class TextCommandDialog(QDialog):
         row.addWidget(QLabel('Wrap width (game px):'));self.wrap_width=QSpinBox();self.wrap_width.setRange(0,4096);self.wrap_width.setSpecialValueText('Authored width');row.addWidget(self.wrap_width);layout.addLayout(row)
         self.full_width=QCheckBox('Full-width Latin when using Wrap words / Check fit');layout.addWidget(self.full_width)
         if self.proportional_font:
-            info=QLabel('Proportional font selected: Apply fits multiline text using its bitmap aliases; speaker text is preserved.');info.setWordWrap(True);layout.addWidget(info)
+            info=QLabel('Proportional font selected: Apply uses measured aliases for dialogue and ordinary Latin for fixed-cursor labels. Speaker text is preserved.');info.setWordWrap(True);layout.addWidget(info)
         self.scroll=QScrollArea();self.scroll.setWidgetResizable(True);layout.addWidget(self.scroll,1)
         self.error=QLabel();self.error.setWordWrap(True);self.error.setStyleSheet('color:#f6b19e');layout.addWidget(self.error)
         buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);buttons.accepted.connect(self.apply);buttons.rejected.connect(self.reject);layout.addWidget(buttons)
@@ -132,7 +132,7 @@ class TextCommandDialog(QDialog):
         try:
             values=self.form.read()
             if self.text_layout:self.text_layout.command=SimpleNamespace(args=values)
-            if self.proportional_font and supports_breaks(self.opcode) and self.text_layout:
+            if self.proportional_font and self.text_layout:
                 for key,value in text_fields(dict(opcode=self.opcode,args=values)):
                     packet=self.text_layout.wrap(self.opcode,value,field=key,width=self.wrap_width.value() or None,full_width_latin=True,preserve_speaker=True)
                     codec.put(values,field_path(key),packet['text'])

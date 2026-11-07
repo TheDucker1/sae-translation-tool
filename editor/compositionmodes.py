@@ -32,7 +32,8 @@ def profile_environment(data):
     e['marker'], e['marker_positions'], e['secondary'], e['marker_step'] = sp(), table(lambda: words(2)), r.word('i'), words(2)
     e['stat_duration'] = r.word('i')
     e['response_window'], e['response_origin'], e['response_width'], e['response_scale'] = sp(), words(2), r.word('i'), r.word('f')
-    e['confirmation'] = r.string(); e['response_rectangles'] = [words(4) for _ in range(2)]
+    from .uitextcodec import ui_string
+    e['confirmation'] = ui_string(r,'dialog prompt'); e['response_rectangles'] = [words(4) for _ in range(2)]
     e['response_cursors'] = [sp() for _ in range(2)]; e['cursor_duration'], e['cursor_travel'] = r.word('i'), r.word('f')
     e['stats'] = table(lambda: table(lambda: r.word('i')))
     if len(e['stats']) > 4 or any(len(row) > 3 for row in e['stats']): raise ImageError('Profile stats exceed native capacity')

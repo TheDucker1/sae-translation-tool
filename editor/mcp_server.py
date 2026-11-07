@@ -9,14 +9,14 @@ from .visualcontext import protocol_image
 
 VISUAL_TOOLS=('list_textures','get_texture','get_texture_usage','list_ui_scenes','describe_ui_scene','get_ui_scene','get_ui_scene_layers')
 READ_TOOLS=('get_translation_guide','get_status','list_scripts','get_dialogue_flow','list_commands','get_context','search_text','list_opcodes',
-            'get_script_flow','get_file_links','opcode_help','command_template','format_text','analyze_text_cleanup','get_text_cleanup_plan','validate_project','preview_view','check_texture_export','list_ui_text','get_ui_text')+VISUAL_TOOLS
+            'get_script_flow','get_file_links','opcode_help','command_template','format_text','analyze_text_cleanup','get_text_cleanup_plan','validate_project','preview_view','check_texture_export','list_ui_text','get_ui_text','format_ui_text')+VISUAL_TOOLS
 WRITE_TOOLS=('configure_translation','apply_translations','apply_text_cleanup','edit_commands','undo','redo','save_project','load_project',
              'export_game_copy','preview_start','preview_step','preview_run','preview_rewind','preview_debug',
-             'import_texture_png','remove_texture_replacement','write_texture_png','apply_ui_text')
+             'import_texture_png','remove_texture_replacement','write_texture_png','apply_ui_text','repair_ui_text_font')
 
 INSTRUCTIONS='''This is the Saekano translation editor, exposed through the same Python project and scenario model as its GUI.
 First call get_translation_guide and get_status. Read get_dialogue_flow for speaker/text/choices/branches/state; image/audio/actor commands are compact inspectable cues.
-Non-script UI text uses list_ui_text/get_ui_text/apply_ui_text:help labels, settings, prompts, saves, Extras, keywords and profile catalogues/responses. Inspect coverage/protected fields; preserve placeholders and control tokens. Edits join normal Undo/save, effective UI scenes and separate game export. These fields are separate from scenario commands and texture lettering.
+Non-script UI text uses list_ui_text/get_ui_text/apply_ui_text:help labels, settings, prompts, saves, Extras, keywords and profile catalogues/responses. Inspect renderer/font_guidance and format_ui_text proposals. Fixed-cursor labels use ordinary ASCII with proportional fonts, measured layouts use supported aliases, and unverified consumers remain explicit. repair_ui_text_font repairs existing translated UI fields in one Undo. Preserve placeholders and control tokens. Edits join normal Undo/save, effective UI scenes and separate game export.
 Use list_opcodes to search the human editor's reference and opcode_help for full command/argument rules when needed.
 For image/UI context use list_textures/get_texture/get_texture_usage and list_ui_scenes/describe_ui_scene/get_ui_scene/get_ui_scene_layers.
 Texture/scene tools return native MCP image content plus structured metadata. Scene layers distinguish text from baked texture lettering and report original pixel geometry, order/pass/targets/masks and source IDs. Page layers; request glyphs only when needed.
@@ -46,12 +46,12 @@ def tool_handler(fn,invoke=None):
 def create_server(workspace:TranslationWorkspace,invoke=None):
     live=getattr(workspace,'live',False)
     mode=('LIVE GUI: same in-memory project and preview as the human. get_status reports GUI selection/playback/state_revision/context_revision. Pause playback with pause_preview, then pass expected_state_revision for preview/navigation writes. Project edits require expected_revision; configure_translation requires expected_context_revision. Busy dialogs/export and stale requests reject; refresh status/context and retry. focus_command selects inspection without splicing VM state.' if live else 'STANDALONE: one process owns one in-memory project; hand off saved files to the GUI, not concurrent live editing.')
-    server=MCPServer('Saekano Translator',version='1.5',instructions=INSTRUCTIONS+'\n'+mode,log_level='WARNING')
+    server=MCPServer('Saekano Translator',version='1.6',instructions=INSTRUCTIONS+'\n'+mode,log_level='WARNING')
     def call(fn,*args,**kwargs):return invoke(fn,args,kwargs) if invoke else fn(*args,**kwargs)
     extra=('pause_preview','focus_command') if live else ()
     for name in READ_TOOLS+WRITE_TOOLS+extra:
         server.add_tool(tool_handler(getattr(workspace,name),invoke),structured_output=True,annotations=ToolAnnotations(
-            read_only_hint=name in READ_TOOLS,destructive_hint=name in {'apply_ui_text','apply_translations','apply_text_cleanup','edit_commands','configure_translation','save_project','load_project','undo','redo','import_texture_png','remove_texture_replacement'},
+            read_only_hint=name in READ_TOOLS,destructive_hint=name in {'apply_ui_text','repair_ui_text_font','apply_translations','apply_text_cleanup','edit_commands','configure_translation','save_project','load_project','undo','redo','import_texture_png','remove_texture_replacement'},
             idempotent_hint=name in READ_TOOLS and name!='analyze_text_cleanup',open_world_hint=False))
 
     @server.resource('saekano://guide',mime_type='text/markdown')

@@ -210,7 +210,7 @@ class TranslationWorkspace:
             current=self.project.ui_text_assets.get(key,{}).get('text',f['original'])
             if not include_protected and not f['editable']:continue
             if category and category!=f['category'] or source and source!=f['source']:continue
-            if needle not in ' '.join((key,f['category'],f['original'],current)).casefold():continue
+            if needle not in ' '.join((key,f['category'],f['renderer'],f['original'],current)).casefold():continue
             rows.append(dict(f,current=current,modified=key in self.project.ui_text_assets))
         return dict(revision=self.project.revision,fields=rows[start:start+limit],total=len(rows),next_start=start+limit if start+limit<len(rows) else None,
             categories=sorted({f['category'] for f in c.fields.values()}),inventory=c.summary())
@@ -228,12 +228,34 @@ class TranslationWorkspace:
             source_sha256=c.sources[f['source']]['sha256'],member_sha256=node['sha256'],neighbors=neighbors)
 
     @locked
+    def format_ui_text(self,field_id:Id,text:Annotated[str,Field(max_length=8192)]|None=None)->dict[str,Any]:
+        """Propose font aliases for an environment/catalogue field. Inspect renderer/note: measured layouts support proportional aliases, fixed cursors use ordinary ASCII, unverified consumers remain unchanged. Does not mutate. Apply through apply_ui_text."""
+        from .fontstyle import ui_proposal
+        from .uitext import get_catalog
+        catalog=get_catalog(self.project)
+        if field_id not in catalog.fields:raise ValueError('Unknown UI text field_id')
+        current=self.project.ui_text_assets.get(field_id,{}).get('text',catalog.fields[field_id]['original'])
+        return dict(revision=self.project.revision,expected_text=current,**ui_proposal(self.project,field_id,current if text is None else text,None))
+
+    @locked
+    def repair_ui_text_font(self,expected_revision:Id)->dict[str,Any]:
+        """Match existing translated environment/help/catalogue fields to their verified font consumers in one Undo. Preserves untouched originals and reports unverified consumers through list_ui_text. Use format_ui_text to review individual proposals first."""
+        from .fontstyle import translated_ui_edits,unverified_ui_fields
+        self.check_revision(expected_revision);edits=translated_ui_edits(self.project)
+        changed=bool(edits) and self.project.set_ui_texts(edits)
+        self._cache={};self._preview_revision=None
+        return dict(revision=self.project.revision,changed=bool(changed),applied_fields=[e[0] for e in edits],unverified_fields=unverified_ui_fields(self.project))
+
+    @locked
     def apply_ui_text(self,edits:Annotated[list[UiTextEdit],Field(min_length=1,max_length=100)],expected_revision:Id)->dict[str,Any]:
         """Atomically translate known UI fields with exact expected_text/revision. Preserve placeholders/control syntax, encoding and native table structure. Undo/save/scene preview/export share these changes."""
         self.check_revision(expected_revision)
+        from .uitext import get_catalog
+        catalog=get_catalog(self.project)
         rows=[UiTextEdit.model_validate(e) if isinstance(e,dict) else e for e in edits]
         changed=self.project.set_ui_texts([(e.field_id,e.expected_text,e.translation) for e in rows]);self._cache={};self._preview_revision=None
-        return dict(revision=self.project.revision,changed=changed,applied_fields=[e.field_id for e in rows])
+        return dict(revision=self.project.revision,changed=changed,applied_fields=[e.field_id for e in rows],
+                    applied_text=[dict(field_id=e.field_id,text=self.project.ui_text_assets.get(e.field_id,{}).get('text',catalog.fields[e.field_id]['original'])) for e in rows])
 
     def visual_context(self,expected_catalog_revision=None):
         from .visualcontext import VisualContext
@@ -502,7 +524,7 @@ class TranslationWorkspace:
             if old!=edit.expected_text:raise ValueError('Stale expected_text; read current context and retry')
             translated=native_field(c.opcode,edit.translation,self.project.text_format);layout=None
             profile=bool(self.project.font_asset) and c.opcode in {0x64,0x3f2,0x3f8}
-            if edit.wrap_words or edit.full_width_latin or edit.reflow or profile:
+            if edit.wrap_words or edit.full_width_latin or edit.reflow or self.project.font_asset:
                 layout=TextLayoutService(effective_font(self.project,self._runtime.text),self._runtime.settings,project=self.project,script_id=edit.script_id,command=c).wrap(c.opcode,translated,field=edit.field,width=edit.layout_width,dialogue_mode=edit.dialogue_mode,full_width_latin=edit.full_width_latin or profile and supports_breaks(c.opcode),preserve_speaker=profile,reflow=edit.reflow);translated=layout['text']
             elif edit.layout_width is not None:raise ValueError('layout_width requires wrap_words=true or full_width_latin=true')
             if self.controls(old)!=self.controls(translated):raise ValueError('Text-only translation must preserve native control tokens and order')

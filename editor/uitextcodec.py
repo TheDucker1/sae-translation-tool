@@ -5,6 +5,12 @@ import struct
 from .scriptcodec import Reader, STRING_OBSERVER, string
 
 
+def ui_string(reader,role):
+    previous=getattr(reader,'ui_role','UI text');reader.ui_role=role
+    try:return reader.string()
+    finally:reader.ui_role=previous
+
+
 def help_text(data):
     r=Reader(data);r.take(3+8+32+4)
     def items(role):
@@ -44,7 +50,7 @@ def script_text(data):
         r.string()
         for _ in range(r.count()):r.take(4);r.string();r.take(4)
     r.take(15*4)
-    for _ in range(3):r.string()
+    for _ in range(3):ui_string(r,'dialog prompt')
     r.string()  # Clear-save description; following feature flags retained.
     return r.pos
 

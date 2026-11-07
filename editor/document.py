@@ -271,6 +271,9 @@ class Project:
             if identity not in c.fields:raise EditError('Unknown UI text field_id')
             current=before[identity]['text'] if identity in before else c.fields[identity]['original']
             if expected!=current:raise EditError('UI text changed; re-read the current field before editing')
+            if self.font_asset and text!=c.fields[identity]['original']:
+                from .fontstyle import ui_proposal
+                text=ui_proposal(self,identity,text,None)['text']
             record=make_record(c,identity,text)
             if text==c.fields[identity]['original']:after.pop(identity,None)
             else:after[identity]=record
