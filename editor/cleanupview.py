@@ -20,9 +20,11 @@ class AutoFitDialog(QDialog):
         self.full_width=QCheckBox('Full-width Latin for readability (convert, then fit)')
         self.full_width.setToolTip('Convert supported Latin before fitting. With a proportional font selected, measured text uses its aliases and fixed-cursor labels use ordinary Latin. Controls and reserved breaks are preserved.')
         layout.addWidget(self.full_width)
-        self.proportional=QCheckBox('Proportional dialogue font asset (Vita + PC; no executable changes)')
-        self.proportional.setChecked(bool(self.project.font_asset));self.proportional.setToolTip('Generate and save/export a Font.gsf bitmap override. Refit selected dialogue using those widths; speaker/UI DrawString spacing remains fixed. Undo restores font plus text.')
+        self.proportional=QCheckBox('Proportional dialogue + readable UI font asset (Vita + PC)')
+        self.proportional.setChecked(bool(self.project.font_asset));self.proportional.setToolTip('Generate or upgrade Font.gsf with proportional dialogue and readable bitmap UI letters. Review script/UI proposals and apply everything in one Undo operation.')
         layout.addWidget(self.proportional)
+        self.include_ui=QCheckBox('Include translated UI text (menus, settings, help and catalogues)')
+        self.include_ui.setChecked(True);layout.addWidget(self.include_ui)
         row=QHBoxLayout();row.addWidget(QLabel('Layout detected from each command and script'))
         self.width=self.spin(row,'Multiline width',4096,'Authored');self.lines=self.spin(row,'Lines/page',20,'Fit frame')
         self.label_width=self.spin(row,'Single-line width',4096,'Auto screen fit');layout.addLayout(row)
@@ -36,7 +38,7 @@ class AutoFitDialog(QDialog):
         self.table.itemSelectionChanged.connect(self.inspect);splitter.addWidget(self.table)
         self.review=QPlainTextEdit();self.review.setReadOnly(True);splitter.addWidget(self.review);splitter.setSizes([360,260]);layout.addWidget(splitter,1)
         self.scope.currentIndexChanged.connect(self.invalidate)
-        for widget in (self.skip_japanese,self.hyphen,self.split,self.full_width,self.proportional,self.reflow):widget.toggled.connect(self.invalidate)
+        for widget in (self.skip_japanese,self.hyphen,self.split,self.full_width,self.proportional,self.reflow,self.include_ui):widget.toggled.connect(self.invalidate)
         for widget in (self.width,self.lines,self.label_width):widget.valueChanged.connect(self.invalidate)
         QTimer.singleShot(0,self.analyze)
 
@@ -58,7 +60,7 @@ class AutoFitDialog(QDialog):
             self.plan=analyze_cleanup(self.project,self.owner.session.text,self.owner.session.settings,
                 script_ids=None if scope==2 else [self.owner.script_id],command_ids=uid,skip_japanese=self.skip_japanese.isChecked(),
                 hyphenate=self.hyphen.isChecked(),paginate=self.split.isChecked(),width=self.width.value() or None,
-                max_lines=self.lines.value() or None,label_width=self.label_width.value() or None,full_width_latin=self.full_width.isChecked(),proportional_latin=self.proportional.isChecked(),reflow=self.reflow.isChecked())
+                max_lines=self.lines.value() or None,label_width=self.label_width.value() or None,full_width_latin=self.full_width.isChecked(),proportional_latin=self.proportional.isChecked(),reflow=self.reflow.isChecked(),include_ui=self.include_ui.isChecked())
             self.table.setRowCount(0);self.review.clear();self.font_note=''
             if self.plan.get('font_changed'):
                 before=self.project.font_asset['manifest'].get('generator_revision',1) if self.project.font_asset else 'Original'
@@ -74,10 +76,12 @@ class AutoFitDialog(QDialog):
                 if m:status='Context needed' if m['context_required'] else 'Fits / read-only' if m['fits'] else 'Overflow / read-only'
                 if m and m['auto_edit']:status=status.replace('read-only','conversion only')
                 self.add_row(issue['script_id'],issue['command_id'],status,issue['reason'],issue,False)
-            s=self.plan['summary'];self.status.setText(f"{s['scanned']} text commands scanned; {s['eligible']} eligible; {s['changed_commands']} changes; +{s['inserted_commands']} commands; {s['reported']} reported/skipped. Mechanical hyphens are not language-specific syllabification.")
+            for change in self.plan['ui_changes']:
+                self.add_row(None,change['field_id'],'UI font',change['note'],change,True)
+            s=self.plan['summary'];self.status.setText(f"{s['scanned']} text commands scanned; {s['changed_commands']} script changes; {s['changed_ui_fields']} UI changes; +{s['inserted_commands']} commands; {s['reported']} reported/skipped. Mechanical hyphens are not language-specific syllabification.")
             self.status.setText(self.status.text()+(' Font asset update pending.' if self.plan.get('font_changed') else ''))
             self.apply_button.setText('Apply font update + checked text' if self.plan.get('font_changed') else 'Apply checked changes')
-            self.apply_button.setEnabled(bool(self.plan['changes']) or self.plan.get('font_changed',False))
+            self.apply_button.setEnabled(bool(self.plan['changes'] or self.plan['ui_changes']) or self.plan.get('font_changed',False))
             if self.font_note:self.review.setPlainText(self.font_note)
             if self.table.rowCount():self.table.selectRow(0)
         except (ValueError,RuntimeError,KeyError) as error:self.plan=None;self.status.setText(str(error))
@@ -90,7 +94,8 @@ class AutoFitDialog(QDialog):
             check.setCheckState(Qt.Checked)
         else:check.setFlags(Qt.ItemIsEnabled|Qt.ItemIsSelectable)
         self.table.setItem(row,0,check)
-        for column,text in enumerate((f'{sid:03} / {uid}',status,note),1):self.table.setItem(row,column,QTableWidgetItem(text))
+        label=f'{sid:03} / {uid}' if sid is not None else 'UI / '+uid
+        for column,text in enumerate((label,status,note),1):self.table.setItem(row,column,QTableWidgetItem(text))
 
     def selected_commands(self):
         return [self.table.item(i,0).data(Qt.UserRole)['command_id'] for i in range(self.table.rowCount()) if self.table.item(i,0).checkState()==Qt.Checked]
@@ -99,6 +104,8 @@ class AutoFitDialog(QDialog):
         row=self.table.currentRow()
         if row<0 or self.table.item(row,0) is None:return
         data=self.table.item(row,0).data(Qt.UserRole)
+        if 'field_id' in data:
+            self.review.setPlainText('\n'.join((self.font_note,data['note'],'BEFORE',data['before_text'],'AFTER',data['after_text'])));return
         if 'reason' in data:
             m=data.get('measurement');lines=[self.font_note,data['reason']]
             if m:

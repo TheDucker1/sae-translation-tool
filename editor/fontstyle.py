@@ -7,7 +7,7 @@ from .uitextcodec import PRINTF
 FIXED='fixed_cursor'
 LAYOUT='measured_layout'
 UNKNOWN='consumer_unverified'
-NOTES={FIXED:'Native DrawString uses fixed half/full cells. Ordinary ASCII avoids proportional full-width aliases; spacing remains fixed.',
+NOTES={FIXED:'Native DrawString uses fixed cells. The upgraded font supplies readable Latin bitmap letters in those cells; spacing remains fixed.',
        LAYOUT:'Native layout uses measured glyph advances. The selected proportional font aliases are supported.',
        UNKNOWN:'The renderer for this field is not verified; font normalization is unavailable.'}
 
@@ -25,12 +25,15 @@ def ui_renderer(source,role,index,editable=True):
     return UNKNOWN
 
 
-def fixed_latin(value):
+def fixed_latin(value,font=None):
     """Repair Latin aliases while retaining native separators and non-Latin text."""
     letters=any('A'<=c<='Z' or 'a'<=c<='z' or 'Ａ'<=c<='Ｚ' or 'ａ'<=c<='ｚ' for c in value)
     out=[]
+    double_quote=font is not None and '"' in font.cached
     for c in value:
-        if 0xff01<=ord(c)<=0xff5e and c not in '＿＂':c=chr(ord(c)-0xfee0)
+        if c=='＂' and double_quote:c='"'
+        elif c in '“”' and double_quote and letters:c='"'
+        elif 0xff01<=ord(c)<=0xff5e and c not in '＿＂':c=chr(ord(c)-0xfee0)
         elif letters:c={'‘':"'",'’':"'"}.get(c,c)
         out.append(c)
     return ''.join(out)
@@ -43,10 +46,13 @@ def match_style(value,font,renderer):
     pattern=r'《[^》]*》|≪[^≫]*≫|[①-⑳]|'+PRINTF.pattern
     parts=re.split('('+pattern+')',visible)
     for i in range(0,len(parts),2):
-        if renderer==FIXED:parts[i]=fixed_latin(parts[i])
+        if renderer==FIXED:parts[i]=fixed_latin(parts[i],font)
         elif renderer==LAYOUT:parts[i]=full_width_text(parts[i],font)['text']
     text=''.join(parts)+separator+hidden
-    return dict(text=text,changed=text!=value,renderer=renderer,note=NOTES.get(renderer,'Protected syntax is retained.'))
+    note=NOTES.get(renderer,'Protected syntax is retained.')
+    if renderer==FIXED and font is not None and 'A' not in font.cached:
+        note='Auto-fit can upgrade this selected font to readable UI bitmap glyphs. Native cursor spacing remains fixed.'
+    return dict(text=text,changed=text!=value,renderer=renderer,note=note)
 
 
 def ui_proposal(project,field_id,text,font):
@@ -55,7 +61,7 @@ def ui_proposal(project,field_id,text,font):
     if field_id not in catalog.fields:raise ValueError('Unknown UI text field_id')
     field=catalog.fields[field_id]
     if not field['editable']:raise ValueError(field['reason'] or 'Protected UI field')
-    if project.font_asset and field['renderer']==LAYOUT and font is None:
+    if project.font_asset and field['renderer'] in {FIXED,LAYOUT} and font is None:
         from .text import TextPresentation
         key=(project.root,project.font_asset['manifest']['font_sha256'])
         cached=getattr(project,'_ui_style_font',None)

@@ -15,9 +15,10 @@ Text baked into an image remains in **Images…**; edit its PNG instead.
 4. Edit the translation and choose **Apply field**. **Revert field** restores the
    original. Normal Undo/Redo includes script, font, texture and UI text changes.
    With a proportional font selected, Apply matches the field's verified renderer.
-   **Match font in draft** previews that conversion. **Repair font in translated
-   UI** repairs existing translated fields in one Undo after the current draft is
-   applied/reverted. It retains untouched original fields.
+   **Match font in draft** previews that selected-field conversion. Batch font
+   repair is part of **Auto-fit text…**, with **Include translated UI text** enabled
+   by default. Script/UI proposals and a readable bitmap font upgrade share one
+   review and atomic Apply/Undo. Untouched original field values are retained.
 5. In **Images… → UI compositions…**, preview supported screens with current
    UI strings and textures. The layout controls select the screen/state; they do
    not automatically reconstruct a running game. Use original textures compares
@@ -73,7 +74,7 @@ that every screen/state has been visually playtested.
 
 ## Agent workflow
 
-Restart the existing MCP server/client for version1.6. No new dependencies or
+Restart the existing MCP server/client for version1.7. No new dependencies or
 engine build are required. Standalone and GUI-hosted modes use the same fields:
 
 1. `list_ui_text(query,category,source,include_protected,start,limit)` discovers
@@ -88,8 +89,11 @@ engine build are required. Standalone and GUI-hosted modes use the same fields:
    With a proportional font selected, verified font aliases are matched on Apply.
    `applied_text` returns the actual stored values. `format_ui_text(field_id,text)`
    proposes the conversion without editing and reports renderer capability.
-   `repair_ui_text_font(expected_revision)` repairs existing translated UI fields
-   atomically and lists `unverified_fields` that retain their text.
+   Use `analyze_text_cleanup(include_ui=true,proportional_latin=true)` to review
+   script/UI/font proposals together. `ui_changes` contains field IDs and before/
+   after values; `apply_text_cleanup` accepts those IDs alongside script command
+   IDs in its checked selection. A failed member rejects the whole batch.
+   `repair_ui_text_font` remains available for older clients.
 4. `get_ui_scene` / `get_ui_scene_layers(kind="text")` reflect the translated
    strings in supported layouts. Static preview parameters remain explicit.
 5. Use normal `undo`, `redo`, `save_project` and, when requested,

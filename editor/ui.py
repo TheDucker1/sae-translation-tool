@@ -524,10 +524,10 @@ class Window(QMainWindow):
         if not dialog.exec() or not dialog.plan:return
         try:
             self.guard_edit_snapshot(project,revision);result=apply_cleanup(project,dialog.plan,dialog.selected_commands())
-            if result['changes'] or result.get('font_changed'):
+            if result['changes'] or result.get('ui_fields') or result.get('font_changed'):
                 first=result['changes'][0] if result['changes'] else dict(script_id=self.script_id,command_id=None)
                 self.edited(first['script_id'],first['command_id'],known_valid=True)
-                self.statusBar().showMessage(f"Auto-fit applied to {len(result['changes'])} command(s); inserted {result['inserted_commands']}. "+('Font asset updated. ' if result.get('font_changed') else '')+'Undo restores the batch.')
+                self.statusBar().showMessage(f"Auto-fit applied to {len(result['changes'])} command(s) and {len(result.get('ui_fields',[]))} UI fields; inserted {result['inserted_commands']}. "+('Font asset updated. ' if result.get('font_changed') else '')+'Undo restores the batch.')
         except (ValueError,RuntimeError) as error:self.problem(str(error))
 
     def redo_edit(self,*_):

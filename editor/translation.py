@@ -483,12 +483,12 @@ class TranslationWorkspace:
             max_lines:Annotated[int,Field(ge=1,le=20,strict=True)]|None=None,
             width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
             label_width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
-            dialogue_mode:Literal['auto','ordinary','battle']='auto',limit:Limit=30,full_width_latin:bool=False,proportional_latin:bool=False,reflow:bool=False)->dict[str,Any]:
-        """Analyze all seven text families with automatic per-command/file layouts and texture-derived battle bubble bounds. proportional_latin generates a project/export Font.gsf. Timed messages use verified space padding with intact directive times. Only ordinary synchronous messages paginate. Inherited/retained contexts remain conversion only. reflow repairs old breaks. Omit script_id for whole project and dialogue_mode for automatic selection. Review issues and proposals before Apply."""
+            dialogue_mode:Literal['auto','ordinary','battle']='auto',limit:Limit=30,full_width_latin:bool=False,proportional_latin:bool=False,reflow:bool=False,include_ui:bool=True)->dict[str,Any]:
+        """Unified Auto-fit for script text and translated environment/help fields. include_ui defaults true; ui_changes contains checked field proposals. proportional_latin generates/upgrades Font.gsf with proportional dialogue and readable fixed-cursor Latin bitmaps. Script layouts and bubble bounds are automatic; timed text uses verified spaces. reflow repairs old breaks. Review font, script/UI changes and issues before one atomic Apply."""
         from .textcleanup import analyze_cleanup,public_plan
         plan=analyze_cleanup(self.project,self._runtime.text,self._runtime.settings,
             script_ids=None if script_id is None else [script_id],command_ids=command_ids,skip_japanese=skip_japanese,
-            hyphenate=hyphenate,paginate=paginate,max_lines=max_lines,width=width,label_width=label_width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin,proportional_latin=proportional_latin,reflow=reflow)
+            hyphenate=hyphenate,paginate=paginate,max_lines=max_lines,width=width,label_width=label_width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin,proportional_latin=proportional_latin,reflow=reflow,include_ui=include_ui)
         plans=getattr(self,'_cleanup_plans',{});plans[plan['plan_id']]=plan
         while len(plans)>4:plans.pop(next(iter(plans)))
         self._cleanup_plans=plans;return public_plan(plan,limit=limit)
@@ -504,7 +504,7 @@ class TranslationWorkspace:
     @locked
     def apply_text_cleanup(self,plan_id:Id,expected_revision:Id,
                            command_ids:Annotated[list[Id],Field(max_length=1000)]|None=None)->dict[str,Any]:
-        """Apply cleanup text and a reviewed font_asset update atomically as one Undo transaction. font_changed can apply with no text changes. Omit command_ids for all text proposals; an empty list still applies a pending font update. Reject stale/invalid plans without edits."""
+        """Apply reviewed script, UI and font changes in one Undo transaction. command_ids may contain script command IDs and UI field_ids from ui_changes. Omit for all proposals; an empty list still applies a pending font update. Reject stale/invalid plans atomically."""
         from .textcleanup import apply_cleanup
         self.check_revision(expected_revision);plan=getattr(self,'_cleanup_plans',{}).get(plan_id)
         if plan is None:raise ValueError('Unknown/expired cleanup plan; analyze again')

@@ -130,7 +130,7 @@ def split_pages(service,text,mode,width,max_lines,hyphenate):
 
 
 def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,skip_japanese=True,
-                    hyphenate=True,paginate=True,max_lines=None,width=None,label_width=None,dialogue_mode='auto',full_width_latin=False,proportional_latin=False,reflow=False):
+                    hyphenate=True,paginate=True,max_lines=None,width=None,label_width=None,dialogue_mode='auto',full_width_latin=False,proportional_latin=False,reflow=False,include_ui=True):
     if dialogue_mode not in {'auto','ordinary','battle'}:raise ValueError('Invalid dialogue layout mode')
     for value in (width,label_width):
         if value is not None and (isinstance(value,bool) or not isinstance(value,int) or not 1<=value<=4096):raise ValueError('Width must be1–4096px')
@@ -138,7 +138,7 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
     sids=sorted(project.scripts) if script_ids is None else sorted(set(script_ids));wanted=None if command_ids is None else set(command_ids)
     if any(sid not in project.scripts for sid in sids):raise ValueError('Unknown script ID')
     if wanted is not None and wanted-set(project.locations()):raise ValueError('Unknown command ID')
-    plan=dict(plan_id=uuid.uuid4().hex,revision=project.revision,changes=[],issues=[],scanned=0,eligible=0)
+    plan=dict(plan_id=uuid.uuid4().hex,revision=project.revision,changes=[],ui_changes=[],issues=[],scanned=0,eligible=0)
     from .fontpatch import make_asset,effective_font,GENERATOR_REVISION
     font=effective_font(project,font)
     asset=project.font_asset
@@ -242,7 +242,20 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
                         page_count=len(pages),capacity=capacity,dialogue_mode=mode,warnings=warnings))
             except (ValueError,KeyError,IndexError,OverflowError) as error:
                 plan['issues'].append(dict(script_id=sid,command_id=c.uid,reason=str(error)))
-    plan['summary']=dict(scanned=plan['scanned'],eligible=plan['eligible'],changed_commands=len(plan['changes']),
+    if include_ui and asset and project.ui_text_assets:
+        from .fontstyle import ui_proposal,UNKNOWN
+        view=copy(project);view.font_asset=asset
+        for identity,record in project.ui_text_assets.items():
+            try:
+                proposal=ui_proposal(view,identity,record['text'],font)
+                if proposal['renderer']==UNKNOWN:
+                    plan['issues'].append(dict(script_id=None,command_id=identity,reason=proposal['note']))
+                if proposal['changed']:
+                    plan['ui_changes'].append(dict(field_id=identity,command_id=identity,before_text=record['text'],
+                        after_text=proposal['text'],renderer=proposal['renderer'],note=proposal['note']))
+            except (ValueError,KeyError,OSError) as error:
+                plan['issues'].append(dict(script_id=None,command_id=identity,reason=str(error)))
+    plan['summary']=dict(scanned=plan['scanned'],eligible=plan['eligible'],changed_commands=len(plan['changes']),changed_ui_fields=len(plan['ui_changes']),
                          inserted_commands=sum(c['page_count']-1 for c in plan['changes']),reported=len(plan['issues']))
     return plan
 
@@ -250,7 +263,8 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
 def public_plan(plan,start=0,limit=30):
     result=deepcopy({**{k:v for k,v in plan.items() if k!='font_asset'},'changes':[{k:v for k,v in c.items() if k!='pages'} for c in plan['changes'][start:start+limit]],
         'issues':plan['issues'][start:start+limit],
-        'next_start':start+limit if start+limit<max(len(plan['changes']),len(plan['issues'])) else None})
+        'ui_changes':plan.get('ui_changes',[])[start:start+limit],
+        'next_start':start+limit if start+limit<max(len(plan['changes']),len(plan['issues']),len(plan.get('ui_changes',[]))) else None})
     if plan.get('font_asset'):result['font_asset']={k:v for k,v in plan['font_asset']['manifest'].items() if k!='glyphs'}
     return result
 
@@ -258,14 +272,19 @@ def public_plan(plan,start=0,limit=30):
 def apply_cleanup(project,plan,command_ids=None):
     if project.revision!=plan['revision']:raise ValueError('Stale cleanup plan; analyze the current project again. Nothing applied.')
     changes={c['command_id']:c for c in plan['changes']}
-    wanted=set(changes) if command_ids is None else set(command_ids)
-    if wanted-set(changes):raise ValueError('Selected command is not in this cleanup plan')
+    ui_changes={c['field_id']:c for c in plan.get('ui_changes',[])}
+    available=set(changes)|set(ui_changes)
+    wanted=available if command_ids is None else set(command_ids)
+    if wanted-available:raise ValueError('Selected item is not in this cleanup plan')
     font_changed=plan.get('font_asset',project.font_asset)!=project.font_asset
     if not wanted and not font_changed:return dict(revision=project.revision,changes=[],inserted_commands=0,font_changed=False)
     from .document import Command
     candidate=copy(project);candidate.scripts=project.scripts.copy();candidate.preview_issues=[]
     candidate.font_asset=plan.get('font_asset',project.font_asset)
-    affected={changes[uid]['script_id'] for uid in wanted};result=[];inserted=0
+    candidate.undo_stack=[];candidate.redo_stack=[]
+    selected_ui=[ui_changes[key] for key in ui_changes if key in wanted]
+    if selected_ui:candidate.set_ui_texts([(c['field_id'],c['before_text'],c['after_text']) for c in selected_ui])
+    affected={changes[uid]['script_id'] for uid in wanted if uid in changes};result=[];inserted=0
     for sid in affected:
         rows=[]
         for old in project.scripts[sid].commands:
@@ -280,7 +299,9 @@ def apply_cleanup(project,plan,command_ids=None):
         candidate.scripts[sid]=replace(project.scripts[sid],commands=rows)
     issues=candidate.validate()
     if issues:raise ValueError(f'Cleanup rejected without changes: file{issues[0].script}/{issues[0].command}: {issues[0].message}')
-    before=project.scripts.copy();before_font=project.font_asset;project.scripts=candidate.scripts;project.font_asset=candidate.font_asset
-    project.remember(('Auto-fit translated text',before,project.scripts.copy(),before_font,project.font_asset));project.redo_stack=[]
+    before=project.scripts.copy();before_font=project.font_asset;before_ui=project.ui_text_assets
+    project.scripts=candidate.scripts;project.font_asset=candidate.font_asset;project.ui_text_assets=candidate.ui_text_assets
+    project.remember(('Auto-fit translated text',before,project.scripts.copy(),before_font,project.font_asset,
+                      project.texture_assets,project.texture_assets,before_ui,project.ui_text_assets));project.redo_stack=[]
     project.touched.update(affected);project.preview_issues=[];project.revision=uuid.uuid4().hex
-    return dict(revision=project.revision,changes=result,inserted_commands=inserted,valid=True,font_changed=font_changed)
+    return dict(revision=project.revision,changes=result,ui_fields=[c['field_id'] for c in selected_ui],inserted_commands=inserted,valid=True,font_changed=font_changed)

@@ -1,4 +1,4 @@
-# Proportional dialogue font assets
+# Dialogue and UI font assets
 
 The optional font feature generates a bitmap override from your supplied game
 font. It works through the existing asset-loading path on Vita/Vita3K and the PC
@@ -8,10 +8,10 @@ outputs and are not included in this repository.
 ## Use
 
 1. Load the original USRDIR and open your translation project.
-2. **Auto-fit text…** -> choose the scope -> check **Proportional dialogue font
-   asset** -> **Analyze again**.
-3. Review text/page proposals and the font update notice. **Apply** commits the
-   selected text and font together. Ordinary text-form Apply and MCP translations
+2. **Auto-fit text…** -> choose the scope -> check **Proportional dialogue + readable
+   UI font asset** and keep **Include translated UI text** enabled -> **Analyze again**.
+3. Review script/UI proposals and the font update notice. **Apply** commits the
+   selected script/UI text and font together in one Undo. Text-form Apply and MCP translations
    then use the selected font's aliases and fitting metrics.
 4. Save the project and export to a new/empty folder. The selected `Font.gsf` is
    included automatically. Select that exported data manually in your player or
@@ -33,13 +33,17 @@ fixed paths caused widely separated letters and incorrect centering.
 
 With a proportional font selected, text-form Apply, MCP translation edits and
 Auto-fit now restore ordinary Latin in fixed-cursor script labels. Run Auto-fit
-again to repair existing choice/topic/caption strings. The dialogue aliases stay
-in their measured layouts. In UI text…, use Match font in draft before Apply or
-Repair font in translated UI for existing environment/help/catalogue edits.
+again to repair existing choice/topic/caption and translated environment/help/
+catalogue strings together. The dialogue aliases stay in their measured layouts.
 New UI translations match verified consumers on Apply automatically. Save and
 export a new copy after either repair.
 
-These repairs select compatible text aliases. Fixed-cursor UI remains monospaced.
+Font generator revision3 supplies readable bitmap Latin letters for fixed-cursor
+UI, using the same original font face as dialogue. ASCII retains the native cursor
+width, while the bitmap supplies correctly sized letter ink. These letters avoid
+the PVF precache-cell compression. Their advances and proportional dialogue glyphs
+are preserved. Auto-fit proposes the font upgrade even when text stays identical.
+Fixed-cursor UI remains monospaced; lettering baked into textures has its own artwork.
 The selected font's shorter ASCII-space measurement can still cause a small
 centering difference in fixed UI. Assets cannot supply proportional cursor steps
 to that active DrawString path. Unverified consumers are labeled explicitly and
@@ -54,7 +58,7 @@ Apply can update only the font even when no script text changes. Save/export a
 new copy afterward. Uncheck the option and reanalyze to keep the embedded older
 font; use Undo to reverse an applied change.
 
-Generator revision 2 tightens apostrophe masks and removes excess quote padding.
+Generator revision2 tightened apostrophe masks; revision3 adds readable UI bitmaps.
 It preserves literal spaces in the script; it does not guess which spaces the
 translator intended or introduce pair-specific kerning.
 

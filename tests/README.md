@@ -29,6 +29,7 @@ Run the affected module, for example:
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_width_controls.py -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_autofit_layouts.py -v
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_fontstyle.py -v
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_autofit_ui.py -v
 ```
 
 Translator/MCP checks require `requirements-mcp.txt`. Run a focused check when
@@ -40,6 +41,8 @@ Auto-fit layout checks distinguish all seven text consumers across files,
 fixed label advances, native space padding, curved fill masks and explicit reflow.
 Font-style checks distinguish fixed-cursor labels from measured text, preserve
 syntax/hidden data and check existing UI repair, typed serialization and Undo.
+Unified Auto-fit checks cover combined script/UI Apply and Undo, checked UI-only
+selection, stale plans and rejection of invalid UI text before any batch commit.
 
 The image module uses tiny synthetic GPDA/GXT/font fixtures for pixel layouts,
 member provenance, extraction boundaries and asynchronous GUI source switching.

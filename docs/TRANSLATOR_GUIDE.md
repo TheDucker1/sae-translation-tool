@@ -153,8 +153,12 @@ Fixed-position labels use their own cursor advances even with a proportional
 dialogue font. With that font selected, their Latin aliases are restored to
 ordinary ASCII automatically rather than using proportional full-width aliases.
 Run Auto-fit again to repair labels from older projects. For non-script labels,
-UI text… offers Match font in draft and Repair font in translated UI. MCP exposes
-renderer/font_guidance, format_ui_text and repair_ui_text_font. Verified dialog
+Auto-fit includes translated environment/help/catalogue text by default. Font
+revision3 adds readable fixed-cursor bitmap letters from the dialogue font face.
+Review `ui_changes` with script/font proposals and Apply once; Undo restores all
+three. `include_ui=false` explicitly limits the batch to script/font work.
+UI text… retains Match font in draft for individual edits. MCP exposes
+renderer/font_guidance and format_ui_text. Verified dialog
 and profile response layouts keep proportional aliases. Fixed-cursor UI remains
 monospaced; unverified consumers retain text with an explicit capability notice.
 A rejected field is reported individually; other fitting fields
