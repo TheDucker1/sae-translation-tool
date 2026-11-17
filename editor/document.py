@@ -4,12 +4,13 @@ from pathlib import Path
 from copy import deepcopy
 from collections import Counter
 import hashlib,json,uuid
-from .engine import TEXT_OPS,ROOT
+from .engine import TEXT_OPS,ROOT,text_fields
 from . import scriptcodec as codec
 from .opcodes import CATALOG
 from .semantics import condition,numeric
 from .text import TextFormat
-from .textlayout import normalize_arguments
+from .textlayout import field_path,normalize_arguments
+from .pairspacing import config_for
 
 
 class EditError(ValueError):pass
@@ -110,11 +111,18 @@ class Project:
                 codec.put(args,path,value)
         return args
 
-    def compile(self,sid,locations=None):
+    def compile(self,sid,locations=None,*,wire_text=None):
         script=self.scripts[sid];locations=locations or self.locations();records=[]
         for c in script.commands:
             args=self.arguments(sid,c,locations)
-            if c.authored:
+            projected = False
+            if wire_text:
+                for field, value in text_fields(dict(opcode=c.opcode, args=args)):
+                    wire = wire_text(c.opcode, args, field, value, c.authored)
+                    if wire != value:
+                        codec.put(args, field_path(field), wire)
+                        projected = True
+            if c.authored or projected:
                 raw=bytes.fromhex(c.raw)
                 tail=raw[codec.text_end(c.opcode,raw):] if raw else b''
                 payload=codec.encode_text(c.opcode,args)+tail
@@ -134,7 +142,7 @@ class Project:
         out=[];locations=self.locations();total=sum(len(s.commands) for s in self.scripts.values())
         if self.ui_text_assets:
             from .uitext import get_catalog,validate_records
-            try:validate_records(self.ui_text_assets,get_catalog(self))
+            try:validate_records(self.ui_text_assets,get_catalog(self),pairing=config_for(self.font_asset))
             except (ValueError,KeyError,OSError,TypeError) as error:out.append(Diagnostic(-1,None,'UI text: '+str(error)))
         if self.font_asset:
             from .fontpatch import validate_asset
@@ -279,11 +287,11 @@ class Project:
             if self.font_asset and text!=c.fields[identity]['original']:
                 from .fontstyle import ui_proposal
                 text=ui_proposal(self,identity,text,None)['text']
-            record=make_record(c,identity,text)
+            record=make_record(c,identity,text,pairing=config_for(self.font_asset))
             if text==c.fields[identity]['original']:after.pop(identity,None)
             else:after[identity]=record
         if before==after:return False
-        prepare(after,self.root,c,check_metadata=False)  # Draft persistence; publication capacities are export checks.
+        prepare(after,self.root,c,check_metadata=False,pairing=config_for(self.font_asset))
         scripts=self.scripts.copy()
         self.remember(('Edit UI text',scripts,scripts,self.font_asset,self.font_asset,self.texture_assets,self.texture_assets,before,after))
         self.ui_text_assets=after;self.redo_stack=[];self.revision=uuid.uuid4().hex
@@ -360,7 +368,7 @@ class Project:
         self._texture_catalog=validate_collection(self.texture_assets,self.root,self._texture_catalog)
         if self.ui_text_assets:
             from .uitext import get_catalog,validate_records
-            validate_records(self.ui_text_assets,get_catalog(self))
+            validate_records(self.ui_text_assets,get_catalog(self),pairing=config_for(self.font_asset))
         data=dict(format='saekano-editor',version=3 if self.ui_text_assets else 2 if self.texture_assets else 1,root=self.root,revision=self.revision,touched=sorted(self.touched),fingerprints=self.fingerprints(),scripts=[asdict(self.scripts[sid]) for sid in sorted(self.touched)])
         if self.font_asset:data['font_asset']=self.font_asset
         if self.texture_assets:data['texture_assets']=self.texture_assets
@@ -388,7 +396,7 @@ class Project:
         project.ui_text_assets=data.get('ui_text_assets',{})
         if project.ui_text_assets:
             from .uitext import get_catalog,prepare
-            prepare(project.ui_text_assets,base.root,get_catalog(project),check_metadata=False)
+            prepare(project.ui_text_assets,base.root,get_catalog(project),check_metadata=False,pairing=config_for(project.font_asset))
         project._texture_catalog=validate_collection(project.texture_assets,base.root)
         if project.font_asset:
             from .fontpatch import validate_asset

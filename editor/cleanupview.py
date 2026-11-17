@@ -3,6 +3,7 @@ import json
 from PySide6.QtCore import Qt,QTimer
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QCheckBox,
     QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QHeaderView,QPlainTextEdit,QSplitter)
+from .fontpatch import WORD_SPACE_WIDTHS
 from .textcleanup import analyze_cleanup
 
 
@@ -22,8 +23,21 @@ class AutoFitDialog(QDialog):
         self.full_width.setToolTip('Convert supported Latin before fitting. With a proportional font selected, measured text uses its aliases and fixed-cursor labels use ordinary Latin. Controls and reserved breaks are preserved.')
         layout.addWidget(self.full_width)
         self.proportional=QCheckBox('Proportional dialogue + readable UI font asset (Vita + PC)')
-        self.proportional.setChecked(bool(self.project.font_asset));self.proportional.setToolTip('Generate or upgrade Font.gsf with proportional dialogue and readable bitmap UI letters. Review script/UI proposals and apply everything in one Undo operation.')
-        layout.addWidget(self.proportional)
+        self.proportional.setChecked(bool(self.project.font_asset));self.proportional.setToolTip('Generate or upgrade Font.gsf with proportional dialogue, Vietnamese glyphs and readable bitmap UI letters. Review script/UI proposals and apply everything in one Undo operation.')
+        font_row = QHBoxLayout()
+        font_row.addWidget(self.proportional)
+        font_row.addStretch()
+        font_row.addWidget(QLabel('Word space'))
+        self.word_space = QComboBox()
+        self.word_space.addItem('Keep current' if self.project.font_asset else 'Font default', None)
+        for pixels in WORD_SPACE_WIDTHS:
+            self.word_space.addItem(f'{pixels} px', pixels)
+        self.word_space.setToolTip('Advance of one space at the default dialogue scale. Other scales can round differently.')
+        self.word_space.setEnabled(self.proportional.isChecked())
+        self.proportional.toggled.connect(self.word_space.setEnabled)
+        self.word_space.currentIndexChanged.connect(self.invalidate)
+        font_row.addWidget(self.word_space)
+        layout.addLayout(font_row)
         self.include_ui=QCheckBox('Include translated UI text (menus, settings, help and catalogues)')
         self.include_ui.setToolTip('Normalize with the final font first, then fit native multiline text and check labels, grouped help and formatted values. Review overflow/context diagnostics and preview checked proposals.')
         self.include_ui.setChecked(True);layout.addWidget(self.include_ui)
@@ -63,12 +77,16 @@ class AutoFitDialog(QDialog):
             self.plan=analyze_cleanup(self.project,self.owner.session.text,self.owner.session.settings,
                 script_ids=None if scope==2 else [self.owner.script_id],command_ids=uid,skip_japanese=self.skip_japanese.isChecked(),
                 hyphenate=self.hyphen.isChecked(),paginate=self.split.isChecked(),width=self.width.value() or None,
-                max_lines=self.lines.value() or None,label_width=self.label_width.value() or None,full_width_latin=self.full_width.isChecked(),proportional_latin=self.proportional.isChecked(),reflow=self.reflow.isChecked(),include_ui=self.include_ui.isChecked())
+                max_lines=self.lines.value() or None,label_width=self.label_width.value() or None,full_width_latin=self.full_width.isChecked(),proportional_latin=self.proportional.isChecked(),reflow=self.reflow.isChecked(),include_ui=self.include_ui.isChecked(),
+                word_space_px=self.word_space.currentData() if self.proportional.isChecked() else None)
             self.table.setRowCount(0);self.review.clear();self.font_note=''
             if self.plan.get('font_changed'):
-                before=self.project.font_asset['manifest'].get('generator_revision',1) if self.project.font_asset else 'Original'
-                after=self.plan['font_asset']['manifest'].get('generator_revision',1)
-                self.font_note=f'Font asset update: {before} -> revision {after}. Saved/exported Font.gsf and preview metrics update with Apply; script text may stay unchanged. Undo restores both.'
+                manifest = self.plan['font_asset']['manifest']
+                pixels = manifest['word_space']['pixels']
+                self.font_note = f'Apply updates Font.gsf and preview metrics. Word space is {pixels} px at the default dialogue scale. Undo restores the previous font and text.'
+                summary = manifest.get('pair_spacing', {}).get('summary')
+                if summary:
+                    self.font_note += f" {summary['variants']} reviewed spacing variants cover {summary['pairs_approved']} pairs. Profile responses support NFC Vietnamese."
                 if self.plan['font_asset']['manifest'].get('native_storage_amount'):
                     self.font_note+=' Includes the asset-only repair of the native storage amount glyph (7456 KB).'
             for change in self.plan['changes']:
@@ -88,6 +106,9 @@ class AutoFitDialog(QDialog):
                 if check['field_id'] not in changed_ui:self.add_row(None,check['field_id'],'Retained / not drawn' if check.get('fit_policy')=='retained' else 'UI checked',check['reason'],check,False)
             s=self.plan['summary'];self.status.setText(f"{s['scanned']} text commands scanned; {s['changed_commands']} script changes; {s['changed_ui_fields']} UI changes; +{s['inserted_commands']} commands; {s['reported']} reported/skipped. Mechanical hyphens are not language-specific syllabification.")
             self.status.setText(self.status.text()+(' Font asset update pending.' if self.plan.get('font_changed') else ''))
+            space = self.plan.get('font_asset', {}).get('manifest', {}).get('word_space')
+            if space:
+                self.status.setText(self.status.text() + f" Word space {space['pixels']} px at default dialogue scale.")
             self.status.setText(self.status.text()+f" {s.get('checked_ui_fields',0)} UI fields checked against their consumers.")
             if s.get('retained_ui_fields'):self.status.setText(self.status.text()+f" {s['retained_ui_fields']} retained fields have no active display consumer.")
             if s.get('ui_font_only'):self.status.setText(self.status.text()+f" {s['ui_font_only']} UI fields have font normalization only; their fit geometry is not implemented.")

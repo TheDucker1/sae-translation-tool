@@ -5,6 +5,7 @@ from .composition import Composition, Layer, sprite, blit, text_layer
 from .imagecodec import ImageError
 from .scriptcodec import Reader
 from .text import color, units, unicode_text
+from .pairspacing import readable
 from . import environments
 
 
@@ -27,7 +28,7 @@ def plain_layer(name, value, origin, width, scale, rgba, font, *, font_tags=Fals
     size = int(font.utility * scale)
     if not 0 < size <= 1024: raise ImageError('Text scale outside composition range')
     height = (max((g['line'] for g in glyphs), default=-1) + 1) * int(font.height * scale + font.leading)
-    layer = Layer(name, kind='text', text=unicode_text(text), size=size,
+    layer = Layer(name, kind='text', text=unicode_text(readable(text, getattr(font, 'pair_spacing', None))), size=size,
                   destination=[*origin, width, height], rgba=list(rgba))
     for index, g in enumerate(glyphs):
         c = chr(g['code']); cached_glyph = font.cached.get(c)

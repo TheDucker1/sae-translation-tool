@@ -11,6 +11,7 @@ import threading
 from .archive import Archive, describe
 from .semantics import condition, numeric, dispatch, flow_index, signed16
 from .text import TextPresentation, unicode_text
+from .pairspacing import config_for, shape_script
 from . import environments
 from . import presentation
 from . import progression,profileflow
@@ -120,10 +121,11 @@ class Session:
         candidate.profile_metadata=self.original_profile_metadata;candidate.settings=self.original_settings
         if ui_text_assets:
             from .uitext import build_catalog,prepare,effective_node
-            catalog=build_catalog(self.root);prepare(ui_text_assets,self.root,catalog,check_metadata=False)
+            pairing = config_for(font_asset)
+            catalog=build_catalog(self.root);prepare(ui_text_assets,self.root,catalog,check_metadata=False,pairing=pairing)
             def read_asset(source,route):
                 identity=source+':'+('/'.join(map(str,route)))
-                return effective_node(catalog,identity,ui_text_assets) if identity in catalog.nodes else catalog.read(source,route)[0]
+                return effective_node(catalog,identity,ui_text_assets,pairing=pairing) if identity in catalog.nodes else catalog.read(source,route)[0]
             if any(key.startswith(('env/env_otaku_mode.dat:','first.dat:3/','resource.dat:3/1/')) for key in ui_text_assets):
                 archive=Archive(catalog.source('resource.dat'));scripts_archive=Archive(archive.read(4))
                 candidate.profile_metadata=profileflow.load(self.root,archive,[e.name for e in scripts_archive.entries],read_asset)
@@ -319,7 +321,9 @@ class Session:
         elif op==0x64 and (lane or not queued):
             if a['selector'] or a['completion']:raise ValueError('Message selector/append route is not implemented in the Python preview')
             parsed=self.text.format.ordinary(a['text']);body,_=self.text.format.prepare(parsed['body'],unit_text=True)
-            glyphs=self.text.layout(body,width=self.settings['battle']['width'] if self.split_dialogue else None,ruby=parsed['ruby'])
+            wire = shape_script(a['text'], op, a, 'text', self.text.format, getattr(self.text, 'pair_spacing', None))
+            displayed = self.text.format.ordinary(wire)['body'] if wire != a['text'] else body
+            glyphs=self.text.layout(displayed,width=self.settings['battle']['width'] if self.split_dialogue else None,ruby=parsed['ruby'])
             side=0 if not self.split_dialogue or a['speaker'] in {-1,self.side0} else 1
             self.messages[side]={**parsed,'body':body,'side':side,'epoch':self.now,'alphas':[None]*len(glyphs),
                                  'glyphs':glyphs,'revealed':False,'forced':False,'command':index,'fired':set()}
@@ -423,8 +427,12 @@ class Session:
                                     dict(label='Cancel',action=dict(cancel_profile=True),enabled=True,reason='',rect=None)]
             elif stage=='result':text=profileflow.result_text(metadata,ordinal,character['id'],row)
             else:text=row['response']
-        surface['blocks']=[presentation.block(self.text,text,[400,234],self.settings['approach']['result_scale'],
-                                              width=self.settings['approach']['result_width'],tags=stage=='result',role='profile_'+stage)]
+        origin, scale, width = [400,234], self.settings['approach']['result_scale'], self.settings['approach']['result_width']
+        if stage == 'response' and getattr(self.text, 'pair_spacing', None):
+            from .compositionmodes import profile_environment
+            response = profile_environment((self.root/'env/env_otaku_mode.dat').read_bytes())
+            origin, scale, width = response['response_origin'], response['response_scale'], response['response_width']
+        surface['blocks']=[presentation.block(self.text,text,origin,scale,width=width,tags=stage=='result',role='profile_'+stage)]
         self.profile_flow=flow;self.surface=surface
 
     def update_profile(self,inputs):

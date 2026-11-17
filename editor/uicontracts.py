@@ -138,6 +138,12 @@ class Contracts:
         from .composition import blit
         for shape,point in zip(cursors,result['cursor_positions']):
             shape=deepcopy(shape);shape['x'],shape['y']=point;excludes.append(blit('',1,2,shape).destination)
+        response_box = blit('', 1, 0, e['response_window']).destination
+        response_cursors = []
+        travel = int(e['cursor_travel'])
+        for shape in e['response_cursors']:
+            x, y, width, height = blit('', 1, 0, shape).destination
+            response_cursors.append([x, y + min(0, travel), width, height + abs(travel)])
         self.bind(e['format'],'profile_result_template',renderer='measured_layout',width=result['text_width'],
             scale=result['text_scale'],height=min(544,result['frame']['y']+result['frame']['h'])-result['text_origin'][1],tags=True,
             panel_asset='resource.dat:1/12',panel_shape=result['fill'],origin=result['text_origin'],excludes=excludes,
@@ -147,11 +153,9 @@ class Contracts:
             for i,span in enumerate(node['spans']):
                 value=FieldText(span.text,node['id']+'#s'+str(i))
                 if span.role.startswith('profile_responses'):
-                    from .composition import blit
-                    box=blit('',1,0,e['response_window']).destination
-                    self.plain(value,e['response_width'],e['response_scale'],min(544,box[1]+box[3])-e['response_origin'][1],
+                    self.plain(value,e['response_width'],e['response_scale'],min(544,response_box[1]+response_box[3])-e['response_origin'][1],
                         panel_asset='resource.dat:3/3/1',panel_shape=e['response_window'],origin=e['response_origin'],
-                        scene=response_scenes.get(value.field_id))
+                        excludes=response_cursors,profile_response=True,scene=response_scenes.get(value.field_id))
                 elif span.role.startswith('profile_items') and span.role.endswith('name'):
                     points=e['positions'];offset=e['label_offset'];frame=e['itemframe']
                     # Carousel clips to500..960. Use its settled focused slot3;

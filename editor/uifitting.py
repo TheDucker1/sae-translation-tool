@@ -37,6 +37,12 @@ class ConsumerLayout(TextLayoutService):
         c=self.contract
         return dict(width=c['width'],native_width=c['width'],scale=c['scale'],region=None,layout='ui_measured')
 
+    def wire_text(self, opcode, source, field):
+        if self.contract.get('profile_response'):
+            from .pairspacing import shape_profile
+            return shape_profile(source, getattr(self.font, 'pair_spacing', None))
+        return source
+
     def check_box(self,opcode,field,line_count,spec):
         c=self.contract;leading=int(self.font.height*c['scale']+self.font.leading);size=int(self.font.utility*c['scale'])
         height=max(0,line_count-1)*leading+size
@@ -122,7 +128,7 @@ def field_fit(identity,value,catalog,working,font,*,reflow,hyphenate,skip=False,
             def fit(region):
                 layout=ConsumerLayout(font,region)
                 if skip:
-                    glyphs=font.layout(prepared,region['width'],region['scale'])
+                    glyphs=font.layout(layout.display_body(0x3f8,value,prepared,''),region['width'],region['scale'])
                     count=max((g['line'] for g in glyphs),default=-1)+1;layout.check_box(0,'',count,{})
                     return dict(text=value,line_count=count,width=region['width'],normalization_only=True)
                 packet=layout.wrap(0x3f8,value,reflow=reflow,hyphenate=hyphenate)

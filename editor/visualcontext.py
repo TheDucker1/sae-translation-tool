@@ -14,6 +14,7 @@ from .imageassets import build_catalog, stamp
 from .imagecodec import ImageError
 from .gxtwriter import constraints
 from .text import TextPresentation, unicode_text
+from .pairspacing import config_for
 
 IMAGE_KEY = '_mcp_image_png'  # Removed by the protocol adapter, never JSON/base64 text.
 COORDINATES = dict(units='game pixels', origin='top-left', x_direction='right', y_direction='down',
@@ -130,7 +131,8 @@ class VisualContext:
             self.scenes.clear(); self.project_revision = workspace.project.revision
             from .uitext import get_catalog
             ui=getattr(workspace.project,'ui_text_assets',{})
-            self.library=EnvironmentLibrary(root,catalog=self.catalog,ui_text_assets=ui,ui_text_catalog=get_catalog(workspace.project) if ui else None)
+            self.library=EnvironmentLibrary(root,catalog=self.catalog,ui_text_assets=ui,ui_text_catalog=get_catalog(workspace.project) if ui else None,
+                                            pairing=config_for(getattr(workspace.project, 'font_asset', None)))
         replacements = dict(getattr(workspace.project, 'texture_assets', {}))
         replacement_key = fingerprint({key: value['png_sha256'] for key, value in replacements.items()})
         if self.replacement_key != (self.source_key, replacement_key):
@@ -151,6 +153,7 @@ class VisualContext:
             # Parsing creates no QRawFont. Immutable font bytes/tables may be
             # shared; raster objects/caches belong to the calling thread only.
             self.font_template = TextPresentation(self.root, font_asset=bytes.fromhex(asset['data_hex']) if asset else None)
+            self.font_template.pair_spacing = config_for(asset)
             self.font_template_key = key
         def fresh():
             font = copy(self.font_template); font.raw_font = None; font.glyph_cache = {}; font.atlas_cache = {}

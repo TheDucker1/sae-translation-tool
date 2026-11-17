@@ -5,6 +5,7 @@ import unicodedata
 from .engine import text_fields
 from .scriptcodec import put
 from .text import units,unicode_text
+from .pairspacing import shape_script
 
 
 def field_path(name):return tuple(int(x) if x.isdecimal() else x for x in name.replace('[','.').replace(']','').split('.'))
@@ -143,11 +144,12 @@ class TextLayoutService:
         """
         spec=self.dimensions(0x64,value=value,width=width,dialogue_mode=dialogue_mode);f=self.font.format
         parsed=f.ordinary(value,geometry_only=True);body,_=f.prepare(parsed['body'],unit_text=True)
-        glyphs=self.font.layout(body,width=spec['width'],scale=spec['scale'],ruby=parsed['ruby'])
+        display = self.display_body(0x64, value, body, '')
+        glyphs=self.font.layout(display,width=spec['width'],scale=spec['scale'],ruby=parsed['ruby'])
         count=max((g['line'] for g in glyphs),default=0)+1
         lines=['' for _ in range(count)];widths=[0]*count
         for g in glyphs:
-            line=g['line'];lines[line]+=chr(g['code']);widths[line]=max(widths[line],g['x']+int(g['advance']*spec['scale']))
+            line=g['line'];lines[line]+=body[g['index']];widths[line]=max(widths[line],g['x']+int(g['advance']*spec['scale']))
         ruby_overflow=[]
         for begin,end,reading in parsed['ruby']:
             span=[g for g in glyphs if begin<=g['index']<end]
@@ -175,6 +177,18 @@ class TextLayoutService:
             if opcode==0x3f6 and '.children[' in field:scale=self.settings['selection']['scale']
         if scale is None:raise ValueError('This opcode has no editable text layout')
         width_source='authored_box'
+        packed_width = None
+        if opcode == 0x3F6 and getattr(f, 'pair_spacing', None):
+            from .choiceart import approach_metrics, make_label
+            packed = make_label(f, value, int(f.utility * scale))
+            if packed:
+                metrics = getattr(f, 'approach_card_metrics', None)
+                if metrics is None:
+                    metrics = f.approach_card_metrics = approach_metrics(f.root, f.utility)
+                _, default = metrics['child' if '.children[' in field else 'parent']
+                packed_width = packed.width
+                authored = True
+                width_source = 'choice_card'
         if default is None:
             width_source='screen_geometry'
             def centered(points,offset=0):
@@ -224,7 +238,7 @@ class TextLayoutService:
         if not isinstance(limit,int) or isinstance(limit,bool) or not 1<=limit<=4096:raise ValueError('Wrap width must be 1–4096 game pixels')
         return dict(width=limit,scale=scale,authored_width=default if authored else None,dialogue_mode=dialogue_mode,
                     width_source='override' if width is not None else 'bubble_contour' if region else width_source,
-                    native_width=native_width,region=region,
+                    native_width=native_width,region=region,packed_label_width=packed_width,
                     layout=('battle_dialogue' if dialogue_mode=='battle' else 'message_window') if opcode==0x64 else
                     {0x65:'ordinary_choice',0x3ec:'chapter_caption',0x3f2:'battle_choice',0x3f6:'approach_topic',
                      0x3f8:'approach_result',0x3f9:'battle_introduction'}[opcode])
@@ -267,6 +281,18 @@ class TextLayoutService:
         if parsed:pairs=pairs[len(parsed['name']):]
         return source,body,pairs,parsed['ruby'] if parsed else []
 
+    def wire_text(self, opcode, source, field):
+        args = self.command.args if self.command is not None else {}
+        return shape_script(source, opcode, args, field, self.font.format, getattr(self.font, 'pair_spacing', None))
+
+    def display_body(self, opcode, source, body, field):
+        wire = self.wire_text(opcode, source, field)
+        if wire == source:
+            return body
+        if opcode == 0x64:
+            return self.font.format.ordinary(wire)['body']
+        return self.font.format.prepare(wire, font_tags=opcode in {0x3F2, 0x3F8})[0]
+
     def wrap(self,opcode,value,*,field='',width=None,dialogue_mode='auto',hyphenate=False,full_width_latin=False,preserve_speaker=False,reflow=False):
         checked=reflow_breaks(value,self.font.format) if reflow and supports_breaks(opcode) else value
         timed=opcode==0x64 and bool(self.font.format.ordinary(native_newlines(checked,self.font.format))['markers'])
@@ -294,7 +320,8 @@ class TextLayoutService:
         if not supports_breaks(opcode):
             source=native_field(opcode,value,f)
             if '\0' in source:raise ValueError('Cannot format NUL-terminated/hidden text')
-            extent=self.label_width(source,spec['scale'])
+            extent=spec.get('packed_label_width')
+            if extent is None:extent=self.label_width(source,spec['scale'])
             if extent>spec['width']:raise ValueError(f"Single-line label/caption is {extent}px wide, exceeding {spec['width']}px; shorten it. This renderer does not support line breaks.")
             return dict(text=source,editor_text=source,changed=source!=original,full_width_conversion=conversion,inserted_breaks=0,line_count=1,
                         lines=[source],line_widths=[extent],break_character=None,breaks_supported=False,font_style=style,**spec)
@@ -303,10 +330,16 @@ class TextLayoutService:
             other=f.tokens[4][1] if c==f.tokens[4][0] else c
             return max(int(self.font.measure(c,self.font.utility)*scale),int(self.font.measure(other,self.font.utility)*scale))
         if limit<advance(f.break_char):raise ValueError('Width is too narrow for the native line-break traversal')
-        widths=[0 if c==f.break_char else advance(c) for c in body]
+        display = self.display_body(opcode, source, body, field)
+        widths=[0 if c==f.break_char else advance(c) for c in display]
         prefix=[0]
         for n in widths:prefix.append(prefix[-1]+n)
-        def span(a,b):return prefix[b]-prefix[a]
+        def span(a,b):
+            extent = prefix[b]-prefix[a]
+            if b > a and display[b-1] != body[b-1]:
+                # A line break removes the following neighbor that supplied the variant.
+                extent += advance(body[b-1]) - widths[b-1]
+            return extent
         blocked={at for a,b,_ in ruby for at in range(a+1,b)}
         def allowed(at):
             if at in blocked:return False
@@ -365,7 +398,8 @@ class TextLayoutService:
         _,prepared,_,ranges=self.projection(opcode,result)
         if len(prepared)>65535:raise ValueError('Formatted text exceeds the native layout index limit')
         self.font.format.prepare(prepared,unit_text=True)
-        actual=self.font.layout(prepared,width=spec['native_width'],scale=scale,ruby=ranges)
+        display_prepared = self.display_body(opcode, result, prepared, field)
+        actual=self.font.layout(display_prepared,width=spec['native_width'],scale=scale,ruby=ranges)
         expected=[line for line,(a,b) in enumerate(lines) for c in body[a:b]+('-' if b in hyphens else '') if not c.isspace()]
         if [g['line'] for g in actual if not chr(g['code']).isspace()]!=expected:
             raise ValueError('Formatted text does not reproduce its planned lines with the native layout')

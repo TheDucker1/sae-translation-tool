@@ -58,7 +58,8 @@ is rejected; your draft remains available until you reselect/Refresh.
 - Counted UTF16 strings are rewritten with updated code-unit lengths; later
   fields move naturally. Table edits retain original encoding, quote/escape the
   edited token, and preserve other tokens, row endings, IDs and archive names.
-  Profile responses use CP932; characters it cannot encode are rejected.
+  Profile responses use CP932. Font revision 8 supplies export aliases for
+  precomposed Vietnamese while the project retains the editable Unicode text.
 - Native UI text generally does **not** word-wrap. Dialog/description strings
   use their authored separators; ordinary UI labels do not become multiline just
   by typing LF. Preview the appropriate screen and keep translations concise.

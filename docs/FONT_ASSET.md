@@ -78,20 +78,82 @@ no marker is inserted into translated strings. Auto-fit measures the same glyph
 inside the combined prompt and proposes the font update through normal Apply,
 Undo, save and separate export. Other dialogue/UI advances are unchanged.
 
+## Vietnamese glyphs
+
+Revision 6 bakes 135 additional glyphs from the bundled Saekano Rounded VN face,
+including precomposed Vietnamese letters and the đồng sign (`₫`). It fits
+stacked marks and descenders into the 24 px bitmap cell. Auto-fit measures the
+new records in dialogue and other measured layouts. Fixed-cell UI still uses its
+native cursor steps.
+
+Run **Auto-fit text…** with the font asset option enabled, apply the font upgrade,
+and export through **Export game…**. Use NFC (precomposed) Vietnamese in game
+text. The OpenType accent positioning in the vector face is available to desktop
+font renderers. The native cache displays individual glyphs by codepoint.
+
+Scenario strings use UTF-16. Revision 8 supports NFC Vietnamese in profile event
+responses inside `resource.dat → 3 → 1 → <scene>`. The editor stores the actual
+translation. Export substitutes standard CP932 kanji codes whose font records
+point to the Vietnamese glyphs. Export checks for collisions with game text.
+
+## Reviewed pair spacing
+
+Revision 8 checks glyph clearance and renders the qualifying shapes for visual
+review. The reviewed adjustments reuse narrower `T`, `V`, and `ư` records across
+selected pairs. Auto-fit and preview use these metrics for plain dialogue,
+visible battle choices, and profile responses. Export substitutes only the
+approved pairs and includes the glyph aliases used by the exported text. The
+project and MCP retain editable letters and spaces.
+
+Apply the revision 8 font proposal through Auto-fit before editing Vietnamese
+profile responses. Speaker names, fixed-cursor UI, tagged and timed script text
+keep their existing spacing path. Use the normal file-separate export workflow.
+
+The original companion outline source is bundled alongside the TTF in
+[`editor/assets/saekano-rounded-vn`](../editor/assets/saekano-rounded-vn/).
+Rebuild the vector face with `python build_font.py` from that folder using
+Python 3.13, `fonttools==4.68.0` and `skia-pathops==0.9.2`. The editor only
+needs its existing Qt dependency to bake the font.
+
+## Word spacing
+
+Revision 7 adds **Word space** to Auto-fit when the font asset option is enabled.
+Choose 3–9 game pixels at the default dialogue scale. **Keep current** retains
+the saved font's choice. Older projects open normally and get the original
+generated advance when upgraded. Other text scales may round differently.
+
+Analyze again after changing the width. Measure and preview the proposed font
+before applying it. Turn on **Reflow existing line breaks** to revisit earlier
+wrapping. Apply, Undo, project saves and game export all carry the chosen font.
+The native layout advances by whole pixels, so a single space cannot advance
+by 5.5 px at a given scale.
+
+## Approach choice cards
+
+With revision 8 selected, translated Latin and Vietnamese Approach topic and
+choice labels can use proportional lettering even on the fixed-cursor cards.
+Eligible plain labels use the configured font's letter and space widths. The
+editor packs the ink into 24 px strips and adds transparent glyphs to give the
+native centering function the measured width it needs. Preview and game export
+use the same strips. Project text stays editable. Export adds the bitmap glyphs
+and their lookup codes while retaining the original choice conditions and targets.
+The `ư` family tucks a following lowercase `c` under the horn when the two ink
+masks have room. This adjustment applies within the packed Approach labels.
+
+Use `format_text` to check the width against the usable card interior. Preview
+the labels in the **Profiles / approach** scene under **Approach topics / choices**.
+
 ## Limits
 
 - Dialogue, multiline battle text and result text use the variable glyph widths.
-  Speaker names and some simple UI labels retain fixed cursor spacing. Those
-  paths cannot be made proportional by this font asset alone.
-- Original Japanese glyph records/atlas are retained. ASCII word spaces become
-  shorter globally, which can affect spacing/centering elsewhere.
-- This uses per-glyph optical spacing, not kerning pairs or complex shaping.
-  The original typeface was designed for fixed cells. Cropping its ink does not
-  recreate proportional bearings: letters such as `j` can still leave visible
-  gaps around their stems. The cached asset format supplies no independent
-  horizontal bearing or pair-kerning field. This is not fully typeset Latin text;
-  a different Latin glyph design could improve its appearance further.
-  Non-ASCII Latin extensions are not generally supported by the script encoding.
+  Speaker names and other simple UI labels use the engine's fixed cursor spacing.
+- Original Japanese glyph records/atlas are retained. The ASCII-space glyph is
+  shared across measured text. Changing its width can also affect centering in
+  fixed-cursor UI.
+- The cached asset format supplies per-glyph advances. Pair spacing uses a
+  reviewed subset of narrower glyph records. Other measured pairs use their
+  base widths. Coverage beyond Latin and Vietnamese depends on the source font
+  and on the storage encoding of each field.
 - Existing authored breaks stay hard unless Reflow existing line breaks is enabled.
   Timed text can use verified space padding with intact directive times. Queued
   and append messages must fit one message; inherited buffers need display context.
@@ -100,5 +162,6 @@ Undo, save and separate export. Other dialogue/UI advances are unchanged.
 
 MCP: use `analyze_text_cleanup(proportional_latin=true)`, review `font_changed`
 and `font_asset`, then call `apply_text_cleanup` with the current revision.
-`get_status` reports selected font hashes/revision. The public plan omits the
-embedded font bytes. Source data, personal saves and executable files stay unchanged.
+Use `word_space_px` to request a specific width. The plan and `get_status`
+report the proposed and applied values as `font_asset.word_space`. The public
+plan reports the pair audit and shared glyph counts in `font_asset.pair_spacing`.

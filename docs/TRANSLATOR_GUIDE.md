@@ -142,6 +142,21 @@ Font generator revision2 tightens apostrophe masks/advances. Reanalyze with
 proportional_latin=true to propose an upgrade to older embedded fonts; inspect
 font_changed. Apply can update Font.gsf alone even with zero text changes. The
 same Undo/save/preview/export rules apply; literal text spaces are not removed.
+
+Pass `word_space_px` to choose a 3–9 px advance per ASCII space at the default
+dialogue scale. Omit it to keep the selected font's width. The plan and current
+status report `font_asset.word_space`. Use `reflow=true` to revisit earlier
+wrapping and preview the proposal before applying it.
+
+For Vietnamese, the current font adds 135 glyphs and expects NFC text. Run
+`analyze_text_cleanup(proportional_latin=true)` and read `font_asset.vietnamese`
+in the plan. To install the font by itself, call `apply_text_cleanup` with the
+plan ID, current revision as `expected_revision`, and `command_ids=[]`.
+`get_status` reports the selected font's coverage. Check `get_ui_text` for the
+encoding of each UI field. For CP932 profile responses, enabling font revision
+8 lets the editor and MCP accept NFC Vietnamese. Preview and export use
+CP932-compatible glyph aliases automatically.
+
 Queued-route and append text can fit within one message, with overflow reported.
 Selector and possible retained-buffer successors report isolated geometry with
 Context needed; combined display requires preceding route/buffer state. These
@@ -158,7 +173,15 @@ revision3 adds readable fixed-cursor bitmap letters from the dialogue font face.
 Revision4 reduces excess dialogue tracking using native scaling/rounding and
 selects proportional quote glyphs in measured text. Review the font upgrade in
 Auto-fit. Existing line breaks need explicit reflow to change; row geometry stays
-authored. Pair kerning and complex shaping are outside this asset path.
+authored. The selected font applies reviewed narrower pairs in plain dialogue,
+visible battle choices, and profile responses. Keep ordinary NFC text and
+regular spaces in translation edits. `get_status` and Auto-fit plans expose the
+exact approved pairs grouped by variant in `font_asset.pair_spacing.variant_details`.
+Translated plain Approach topic and choice labels can use proportional bitmap
+strips with font revision 8. `format_text` reports `packed_label_width` and the
+usable card width. Use the profile scene's Approach topics / choices preview to
+review the placement. Export prepares the matching font records and script
+labels together.
 Review `ui_changes` with script/font proposals and Apply once; Undo restores all
 three. `include_ui=false` explicitly limits the batch to script/font work.
 UI cleanup now normalizes the selected font first, then checks each consumer's
@@ -330,8 +353,9 @@ role, placeholders/control tokens, source hashes and neighboring strings. Then
 apply_ui_text(expected_revision,edits=[{field_id,expected_text,translation}]). Batches
 of up to100 fields are atomic. Protected resource/movie names, parser syntax,
 input glyphs and line-breaking rules cannot be edited. Retain placeholder order,
-control tokens and compound-label separators. CP932 response fields reject
-unencodable characters; UTF16 counts and quoted table tokens are repaired safely.
+control tokens and compound-label separators. CP932 profile responses accept
+NFC Vietnamese with font revision 8. UTF16 counts and quoted table tokens are
+repaired safely.
 
 Normal Undo/Redo/save_project persists these deltas (project version3); UI scenes
 reflect effective strings. Live GUI changes refresh the human's UI text browser;

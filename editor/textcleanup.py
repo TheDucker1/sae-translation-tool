@@ -130,7 +130,7 @@ def split_pages(service,text,mode,width,max_lines,hyphenate):
 
 
 def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,skip_japanese=True,
-                    hyphenate=True,paginate=True,max_lines=None,width=None,label_width=None,dialogue_mode='auto',full_width_latin=False,proportional_latin=False,reflow=False,include_ui=True):
+                    hyphenate=True,paginate=True,max_lines=None,width=None,label_width=None,dialogue_mode='auto',full_width_latin=False,proportional_latin=False,reflow=False,include_ui=True,word_space_px=None):
     if dialogue_mode not in {'auto','ordinary','battle'}:raise ValueError('Invalid dialogue layout mode')
     for value in (width,label_width):
         if value is not None and (isinstance(value,bool) or not isinstance(value,int) or not 1<=value<=4096):raise ValueError('Width must be1–4096px')
@@ -143,7 +143,12 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
     from .fontpatch import make_asset,effective_font,GENERATOR_REVISION
     font=effective_font(project,font)
     asset=project.font_asset
-    if proportional_latin and (asset is None or asset['manifest'].get('generator_revision',1)<GENERATOR_REVISION):asset=make_asset(project.root)
+    if proportional_latin or word_space_px is not None:
+        manifest = asset['manifest'] if asset else {}
+        saved_space = manifest.get('word_space', {}).get('pixels')
+        if (manifest.get('generator_revision', 0) < GENERATOR_REVISION
+                or word_space_px is not None and (type(word_space_px) is not int or word_space_px != saved_space)):
+            asset = make_asset(project.root, word_space_px=saved_space if word_space_px is None else word_space_px)
     plan['font_changed']=asset!=project.font_asset
     if asset:
         font=effective_font(type('FontProject',(),dict(root=project.root,font_asset=asset))(),font)
@@ -261,7 +266,12 @@ def public_plan(plan,start=0,limit=30):
         'ui_changes':plan.get('ui_changes',[])[start:start+limit],
         'ui_checks':plan.get('ui_checks',[])[start:start+limit],
         'next_start':start+limit if start+limit<max(len(plan['changes']),len(plan['issues']),len(plan.get('ui_changes',[])),len(plan.get('ui_checks',[]))) else None})
-    if plan.get('font_asset'):result['font_asset']={k:v for k,v in plan['font_asset']['manifest'].items() if k!='glyphs'}
+    if plan.get('font_asset'):
+        manifest = plan['font_asset']['manifest']
+        result['font_asset'] = {k: v for k, v in manifest.items() if k not in {'glyphs', 'pair_spacing'}}
+        if 'pair_spacing' in manifest:
+            from .pairspacing import public_pair_spacing
+            result['font_asset']['pair_spacing'] = public_pair_spacing(manifest['pair_spacing'])
     return result
 
 

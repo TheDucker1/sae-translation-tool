@@ -60,7 +60,8 @@ def match_style(value,font,renderer):
 
 
 def ui_proposal(project,field_id,text,font):
-    from .uitext import get_catalog
+    from .uitext import get_catalog,wire_value
+    from .pairspacing import config_for
     catalog=get_catalog(project)
     if field_id not in catalog.fields:raise ValueError('Unknown UI text field_id')
     field=catalog.fields[field_id]
@@ -75,7 +76,8 @@ def ui_proposal(project,field_id,text,font):
         font=cached[1]
     result=match_style(text,font,field['renderer']) if project.font_asset else dict(text=text,changed=False,renderer=field['renderer'],note='Select a proportional font asset to match font aliases.')
     from .uitextcodec import encode_span
-    node=catalog.nodes[field['node_id']];encode_span(node['spans'][field['index']],result['text'])
+    node=catalog.nodes[field['node_id']];span=node['spans'][field['index']]
+    encode_span(span,wire_value(span,result['text'],config_for(project.font_asset)))
     return dict(field_id=field_id,**result)
 
 

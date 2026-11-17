@@ -5,6 +5,7 @@ from pathlib import Path
 
 def preview_snapshot(project,field_id,*,plan=None,selected=None):
     from .uitext import get_catalog,make_record
+    from .pairspacing import config_for
     c=get_catalog(project)
     if field_id not in c.fields:raise ValueError('Select a UI text field')
     recipes=[v['scene'] for v in c.fields[field_id].get('contracts',[]) if v.get('scene')]
@@ -19,7 +20,7 @@ def preview_snapshot(project,field_id,*,plan=None,selected=None):
             if selected is not None and change['field_id'] not in selected:continue
             key=change['field_id'];text=change['after_text']
             if text==c.fields[key]['original']:view.ui_text_assets.pop(key,None)
-            else:view.ui_text_assets[key]=make_record(c,key,text)
+            else:view.ui_text_assets[key]=make_record(c,key,text,pairing=config_for(view.font_asset))
     value=view.ui_text_assets.get(field_id,{}).get('text',c.fields[field_id]['original'])
     recipe=recipes[0];state=dict(recipe.get('state',{}))
     if recipe.get('composition'):

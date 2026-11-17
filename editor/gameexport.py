@@ -104,29 +104,77 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     if any(stamp(root/name)!=value for name,value in source_stamps.items()):raise ExportError('Source changed while preparing export')
     first=Archive(first_bytes);resource=Archive(resource_bytes);scripts=nested(resource,4)
     if set(project.scripts)!=set(range(len(scripts.entries))):raise ExportError('Project/source script registry differs')
+    from .pairspacing import config_for, remove_unused_font_records, shape_script
+    pairing = config_for(project.font_asset)
+    reserved = set(pairing['restore']) if pairing else set()
+    used_aliases = set()
+    choice_atlas = None
+    authored_choices = pairing and any(c.opcode == 0x3F6 and c.authored for s in project.scripts.values() for c in s.commands)
+    if authored_choices:
+        from .choiceart import END_CARRIER, FIRST_CARRIER, ChoiceAtlas, approach_metrics
+        from .engine import text_fields
+        from .fontpatch import effective_font
+        from .text import TextPresentation
+        from .uitext import get_catalog
+
+        settings_sources = ('DFHSR4.TTC', 'env/env_approach.dat', 'env/env_script_select.dat', 'env/env_game_utility.dat',
+                            'env/env_string_format.dat', 'env/env_config.dat', 'env/env_global.dat', 'env/env_message_window.dat')
+        source_stamps.update({name: stamp(root/name) for name in settings_sources})
+        font_face = effective_font(project, TextPresentation(root))
+        metrics = approach_metrics(root, font_face.utility)
+        unavailable = {char for s in project.scripts.values() for c in s.commands
+                       for _, text in text_fields(dict(opcode=c.opcode, args=c.args)) for char in text
+                       if FIRST_CARRIER <= ord(char) < END_CARRIER}
+        ui = get_catalog(project)
+        unavailable.update(char for key, row in ui.fields.items()
+                           for char in project.ui_text_assets.get(key, {}).get('text', row['original'])
+                           if FIRST_CARRIER <= ord(char) < END_CARRIER)
+        choice_atlas = ChoiceAtlas(font_face, unavailable)
+
+    def wire_text(opcode, args, field, value, authored):
+        if not reserved.isdisjoint(value):
+            raise ExportError(f'Script field {field} contains a character reserved for font aliases')
+        wire = shape_script(value, opcode, args, field, project.text_format, pairing)
+        used_aliases.update(reserved.intersection(wire))
+        if choice_atlas is not None and authored and opcode == 0x3F6:
+            size, _ = metrics['child' if '.children[' in field else 'parent']
+            wire, _ = choice_atlas.encode(value, size)
+        return wire
+
     locations=project.locations();changed={};objects={}
     for sid,s in sorted(project.scripts.items()):
         checkpoint(None,cancelled,'')
         numbered=nested(scripts,sid);obj=nested(numbered,0)
         original=obj.read(0,gzip=True)
         if original!=bytes.fromhex(s.original):raise ExportError(f'Source script {sid} changed since project import')
-        if sid in project.touched:
-            compiled=project.compile(sid,locations)
+        if sid in project.touched or pairing:
+            compiled=project.compile(sid,locations,wire_text=wire_text if pairing else None)
             if compiled!=original:changed[sid]=compiled;objects[sid]=(numbered,obj)
     report=dict(format='saekano-game-export',version=1,revision=project.revision,changed_scripts=[],
                 source_hashes={name:hashlib.sha256(data).hexdigest() for name,data in [('first.dat',first_bytes),('resource.dat',resource_bytes)]},
                 requires_fresh_progress=False,notes=['Original game files and personal saves are not modified.'])
     font=bytes.fromhex(project.font_asset['data_hex']) if project.font_asset else None
     if font:
-        report['font_asset']={k:v for k,v in project.font_asset['manifest'].items() if k!='glyphs'}
+        report['font_asset']={k:v for k,v in project.font_asset['manifest'].items() if k not in {'glyphs','pair_spacing'}}
         report['source_hashes']['Font.gsf']=project.font_asset['manifest']['source_sha256']
     try:textures,texture_rows,catalog=prepare_textures(getattr(project,'texture_assets',{}),root,progress,cancelled)
     except ImageCancelled as error:raise ExportCancelled(str(error)) from error
     except ImageError as error:raise ExportError('Texture export validation failed: '+str(error)) from error
     report['textures']=texture_rows
     report['changed_textures']=sum(row['changed'] for row in texture_rows)
-    try:ui_changes,ui_rows,ui_catalog=prepare_ui_text(getattr(project,'ui_text_assets',{}),root)
+    try:ui_changes,ui_rows,ui_catalog=prepare_ui_text(getattr(project,'ui_text_assets',{}),root,
+                                                     pairing=pairing,used_aliases=used_aliases)
     except ValueError as error:raise ExportError('UI text export validation failed: '+str(error)) from error
+    if pairing:
+        from .fontpatch import pack, sections
+        parts = sections(font)
+        remove_unused_font_records(parts, pairing, used_aliases)
+        if choice_atlas and choice_atlas.glyphs:
+            choice_atlas.append_to(parts)
+            report['font_asset']['approach_labels'] = dict(unique_labels=len(choice_atlas.labels),
+                                                         generated_glyphs=len(choice_atlas.glyphs))
+        font = pack(parts)
+        report['font_asset']['pair_spacing'] = dict(pairing['summary'], exported_aliases=len(used_aliases))
     report['ui_text']=ui_rows;report['changed_ui_text']=sum(row['changed'] for row in ui_rows)
     if ui_catalog:
         for name,metadata in ui_catalog.sources.items():

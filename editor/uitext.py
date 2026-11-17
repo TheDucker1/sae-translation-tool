@@ -131,22 +131,30 @@ def get_catalog(project):
     c.verify();return c
 
 
-def make_record(c,identity,text):
+def wire_value(span, text, pairing):
+    if pairing and span.role.startswith('profile_responses'):
+        from .pairspacing import shape_profile
+        return shape_profile(text, pairing)
+    return text
+
+
+def make_record(c,identity,text,*,pairing=None):
     c.verify()
     if identity not in c.fields:raise ValueError('Unknown UI text field_id or changed source schema')
-    f=c.fields[identity];n=c.nodes[f['node_id']];span=n['spans'][f['index']];encode_span(span,text)
+    f=c.fields[identity];n=c.nodes[f['node_id']];span=n['spans'][f['index']]
+    encode_span(span,wire_value(span,text,pairing))
     from .uifitting import validate_structure
     validate_structure(f,text)
     return dict(text=text,source_sha256=c.sources[f['source']]['sha256'],member_sha256=n['sha256'],
         offset=span.start,span_sha256=sha(n['data'][span.start:span.end]))
 
 
-def validate_records(records,c):
+def validate_records(records,c,*,pairing=None):
     if not isinstance(records,dict) or len(records)>16384:raise ValueError('Invalid UI text replacement collection')
     c.verify()
     for identity,record in records.items():
         if not isinstance(record,dict) or set(record)!={'text','source_sha256','member_sha256','offset','span_sha256'}:raise ValueError('Invalid UI text replacement record')
-        if record!=make_record(c,identity,record['text']):raise ValueError('UI text source fingerprint mismatch: '+identity)
+        if record!=make_record(c,identity,record['text'],pairing=pairing):raise ValueError('UI text source fingerprint mismatch: '+identity)
 
 
 def metadata_issues(records,c):
@@ -164,13 +172,14 @@ def metadata_issues(records,c):
     return issues
 
 
-def effective_node(c,node_id,records,data=None):
+def effective_node(c,node_id,records,data=None,*,pairing=None,used_aliases=None):
     n=c.nodes[node_id];edits={f['index']:records[key]['text'] for key,f in c.fields.items() if f['node_id']==node_id and key in records}
     from .uifit import preserved_tip_edits,validate_tips
     preserved_tip_edits(c,n,records,edits)
     if not edits:return n['data'] if data is None else data
     original=n['data']
     if data is not None and data!=original:raise ValueError('Overlapping UI text/other asset edit at '+node_id)
+    edits = {i: wire_value(n['spans'][i], text, pairing) for i, text in edits.items()}
     result=rewrite(original,n['spans'],edits)
     # Read again by the consumer schema. Length changes must relocate subsequent
     # fields naturally, never by replacing equal byte strings across the file.
@@ -178,6 +187,8 @@ def effective_node(c,node_id,records,data=None):
     if len(spans)!=len(n['spans']):raise ValueError('UI text edits changed the native field structure')
     for i,text in edits.items():
         if spans[i].text.split('\0',1)[0]!=text:raise ValueError('UI text rewrite did not roundtrip')
+        if pairing and used_aliases is not None:
+            used_aliases.update(char for char in text if char in pairing['restore'])
     validate_tips(c,n,records,spans)
     if n['source'].endswith('env_otaku_mode.dat'):
         from .compositionmodes import profile_environment
@@ -193,9 +204,15 @@ def effective_node(c,node_id,records,data=None):
     return result
 
 
-def prepare(records,root,catalog=None,*,check_metadata=True):
-    if not records:return {},[],None
-    c=catalog or build_catalog(root);validate_records(records,c);changes={};rows=[]
+def prepare(records,root,catalog=None,*,check_metadata=True,pairing=None,used_aliases=None):
+    if not records and not (pairing and used_aliases is not None):return {},[],None
+    c=catalog or build_catalog(root);validate_records(records,c,pairing=pairing);changes={};rows=[]
+    if pairing and used_aliases is not None:
+        reserved = set(pairing['restore'])
+        for key, field in c.fields.items():
+            value = records[key]['text'] if key in records else field['original']
+            if not reserved.isdisjoint(value):
+                raise ValueError(f'{key} contains a character reserved for font aliases')
     if check_metadata:
         problems=metadata_issues(records,c)
         if problems:raise ValueError('; '.join(p['message'] for p in problems))
@@ -205,7 +222,7 @@ def prepare(records,root,catalog=None,*,check_metadata=True):
     if context and context['columns']!=context['original']:
         nodes.update(n['id'] for n in c.nodes.values() if n['table'] and n['table'][2]=='profile_items')
     for node_id in sorted(nodes):
-        n=c.nodes[node_id];result=effective_node(c,node_id,records)
+        n=c.nodes[node_id];result=effective_node(c,node_id,records,pairing=pairing,used_aliases=used_aliases)
         if result!=n['data']:changes.setdefault(n['source'],[]).append((n['chain'],result))
     for key,record in records.items():
         f=c.fields[key];rows.append(dict(field_id=key,source=f['source'],route=f['route'],changed=record['text']!=f['original']))

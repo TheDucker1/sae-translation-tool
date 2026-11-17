@@ -22,7 +22,8 @@ from .gameexport import export_game
 from .mcp_models import TranslationEdit,CommandEdit,PreviewInput,BankEdit,Id,Index,Limit,PixelRect
 from .dialogueview import project_flow,transcript,readable
 from .textlayout import TextLayoutService,native_field,supports_breaks
-from .fontpatch import effective_font
+from .fontpatch import WORD_SPACE_WIDTHS,effective_font
+from .pairspacing import public_pair_spacing
 from .mcp_models import UiTextEdit
 
 GUIDE=(ROOT/'docs/TRANSLATOR_GUIDE.md').read_text(encoding='utf-8')
@@ -176,7 +177,7 @@ class TranslationWorkspace:
 
     @locked
     def get_status(self)->dict[str,Any]:
-        """Read current revision, unsaved state, text-change counts, saved context and preview revision."""
+        """Read current revision, unsaved state, text-change counts, saved context, selected font coverage and preview revision."""
         key=('stats',self.project.revision)
         if key not in self._cache:
             total=modified=0
@@ -185,11 +186,18 @@ class TranslationWorkspace:
                     base=self._baseline.get(c.uid);old=fields(base) if base else {}
                     for name,value in fields(c).items():total+=1;modified+=old.get(name)!=value
             self._cache[key]=dict(scripts=len(self.project.scripts),text_fields=total,modified_text_fields=modified)
+        font_asset = None
+        if self.project.font_asset:
+            manifest = self.project.font_asset['manifest']
+            font_asset = {key: manifest.get(key) for key in ('format', 'font_sha256', 'source_sha256', 'generator_revision')}
+            font_asset.update({key: deepcopy(manifest[key]) for key in ('vietnamese', 'word_space') if key in manifest})
+            if 'pair_spacing' in manifest:
+                font_asset['pair_spacing'] = public_pair_spacing(manifest['pair_spacing'])
         return dict(revision=self.project.revision,unsaved=self.project.saved_revision!=self.project.revision,
                     ui_metadata_issues=self.project.ui_metadata_issues(),
                     texture_replacement_count=len(getattr(self.project,'texture_assets',{})),
                     ui_text_replacement_count=len(getattr(self.project,'ui_text_assets',{})),
-                    font_asset={k:self.project.font_asset['manifest'].get(k) for k in ('format','font_sha256','source_sha256','generator_revision')} if self.project.font_asset else None,
+                    font_asset=font_asset,
                     project_file=self.project_file,profile=deepcopy(self.profile),context_revision=self.context_revision(),**self._cache[key],
                     preview_current=self._preview_revision==self.project.revision,
                     note='Changed text is not a claim of linguistic review. GUI/MCP exchange saved projects, not live shared state.')
@@ -505,12 +513,25 @@ class TranslationWorkspace:
             max_lines:Annotated[int,Field(ge=1,le=20,strict=True)]|None=None,
             width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
             label_width:Annotated[int,Field(ge=1,le=4096,strict=True)]|None=None,
-            dialogue_mode:Literal['auto','ordinary','battle']='auto',limit:Limit=30,full_width_latin:bool=False,proportional_latin:bool=False,reflow:bool=False,include_ui:bool=True)->dict[str,Any]:
-        """Unified Auto-fit for script text and translated environment/help fields. include_ui defaults true; ui_changes contains checked field proposals. proportional_latin generates/upgrades Font.gsf with proportional dialogue and readable fixed-cursor Latin bitmaps. Script layouts and bubble bounds are automatic; timed text uses verified spaces. reflow repairs old breaks. Review font, script/UI changes and issues before one atomic Apply."""
+            dialogue_mode:Literal['auto','ordinary','battle']='auto',limit:Limit=30,full_width_latin:bool=False,proportional_latin:bool=False,reflow:bool=False,include_ui:bool=True,
+            word_space_px:Annotated[int,Field(ge=WORD_SPACE_WIDTHS.start,le=WORD_SPACE_WIDTHS.stop-1,strict=True)]|None=None)->dict[str,Any]:
+        """Plan Auto-fit for script and UI text. include_ui defaults true; ui_changes contains checked field proposals.
+
+        Set proportional_latin=true to generate or upgrade Font.gsf with proportional dialogue,
+        readable fixed-cursor Latin bitmaps and precomposed Vietnamese glyphs (NFC). The plan
+        reports font_asset.vietnamese. Apply with command_ids=[] to update only the font.
+        word_space_px requests a font update with that whole-pixel space advance at the
+        default dialogue scale. Omit it to keep the selected width. The plan reports
+        font_asset.word_space and fits text with the proposed width.
+        font_asset.pair_spacing.variant_details lists the approved pairs by narrower glyph.
+        Use NFC Vietnamese in profile responses. The font maps it to CP932 at export.
+        Script layouts and bubble bounds are automatic. Timed text uses verified spaces.
+        Set reflow=true to repair old breaks. Review the plan before applying changes.
+        """
         from .textcleanup import analyze_cleanup,public_plan
         plan=analyze_cleanup(self.project,self._runtime.text,self._runtime.settings,
             script_ids=None if script_id is None else [script_id],command_ids=command_ids,skip_japanese=skip_japanese,
-            hyphenate=hyphenate,paginate=paginate,max_lines=max_lines,width=width,label_width=label_width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin,proportional_latin=proportional_latin,reflow=reflow,include_ui=include_ui)
+            hyphenate=hyphenate,paginate=paginate,max_lines=max_lines,width=width,label_width=label_width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin,proportional_latin=proportional_latin,reflow=reflow,include_ui=include_ui,word_space_px=word_space_px)
         plans=getattr(self,'_cleanup_plans',{});plans[plan['plan_id']]=plan
         while len(plans)>4:plans.pop(next(iter(plans)))
         self._cleanup_plans=plans;return public_plan(plan,limit=limit)

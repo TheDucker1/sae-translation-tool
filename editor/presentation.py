@@ -6,6 +6,7 @@ selection/advance inputs. This is deliberately separate from game presentation.
 """
 from .text import units,unicode_text
 from .semantics import numeric
+from .pairspacing import readable, shape_script
 
 TEXT_OPS={0x64,0x65,0x3ec,0x3f2,0x3f6,0x3f8,0x3f9}
 
@@ -13,21 +14,27 @@ TEXT_OPS={0x64,0x65,0x3ec,0x3f2,0x3f6,0x3f8,0x3f9}
 def glyph_width(g,scale):return g.get('pixel_advance',int(g['advance']*scale))
 
 
-def block(font,value,origin,scale,*,width=None,center=False,baseline=False,rgb=None,tags=False,role='text',single_line=False):
+def block(font,value,origin,scale,*,width=None,center=False,baseline=False,rgb=None,tags=False,role='text',single_line=False,approach_label=False):
     text,colors=(units(value).split('\0',1)[0],[]) if single_line else font.format.prepare(value,font_tags=tags)
     size=int(font.utility*scale)
     if not 0<size<=1024:raise ValueError('Text size outside preview budget')
+    ink_width = None
+    if approach_label:
+        from .choiceart import preview_label
+        text, ink_width = preview_label(font, text, size)
     if single_line:
         glyphs=[];x=0
         for i,c in enumerate(text):
-            advance=font.measure(c,size);glyphs.append(dict(code=ord(c),x=x,y=0,index=i,line=0,advance=advance/scale,pixel_advance=advance));x+=advance
+            advance = size if ink_width is not None else font.measure(c,size)
+            glyphs.append(dict(code=ord(c),x=x,y=0,index=i,line=0,advance=advance/scale,pixel_advance=advance));x+=advance
     else:glyphs=font.layout(text,width=width or 2**20,scale=scale)
     extent=max((g['x']+glyph_width(g,scale) for g in glyphs),default=0)
     x,y=origin
-    if center:x-=extent//2
+    if center:x-=(extent if ink_width is None else font.measure(text,size))//2
     if baseline:y-=size
-    return dict(text=unicode_text(text),units=text,glyphs=glyphs,origin=[x,y],size=size,
-                colors=colors,color=(rgb or [0,0,0,255])[:],role=role)
+    logical = readable(text, getattr(font, 'pair_spacing', None)) if ink_width is None else units(value)
+    return dict(text=unicode_text(logical),units=logical,glyphs=glyphs,origin=[x,y],size=size,
+                colors=colors,color=(rgb or [0,0,0,255])[:],role=role,ink_width=ink_width)
 
 
 def prepare(session,op,args):
@@ -78,7 +85,7 @@ def choice_rows(session,surface,args):
         if not enabled:item['color'][3]=min(item['color'][3],100)
         blocks.append(item)
         glyphs=item['glyphs'];scale=item['size']/f.utility
-        width=max((g['x']+glyph_width(g,scale) for g in glyphs),default=0)
+        width=item['ink_width'] if item['ink_width'] is not None else max((g['x']+glyph_width(g,scale) for g in glyphs),default=0)
         height=max((g['y']+item['size'] for g in glyphs),default=item['size'])
         options.append(dict(label=label,action=action,enabled=enabled,reason=reason,
                             rect=[item['origin'][0]-20,item['origin'][1]-10,max(80,width)+40,height+20],**extra))
@@ -95,7 +102,8 @@ def choice_rows(session,surface,args):
         if not 1<=len(rows)<=4:raise ValueError('Battle choices require 1–4 authored rows')
         for i,row in enumerate(rows[1:],1):
             control=i-1;point=env['choice_positions'][control]
-            item=block(f,row['label'],[0,0],f.scale,width=env['width'],tags=True,role=f'choice{i}')
+            text = shape_script(row['label'], op, args, f'choices[{i}].label', f.format, getattr(f, 'pair_spacing', None))
+            item=block(f,text,[0,0],f.scale,width=env['width'],tags=True,role=f'choice{i}')
             lines=max((g['line'] for g in item['glyphs']),default=0)+1
             offset=env['choice_offsets'][1 if lines==1 else 0]
             extent=max((g['x']+int(g['advance']*f.scale) for g in item['glyphs']),default=0)
@@ -120,7 +128,7 @@ def choice_rows(session,surface,args):
                 if display>=len(table):raise ValueError('Approach parents exceed authored point table')
                 point=table[display]
             row=args['parents'][original];origin=[point[0]+env['text_offset'][0],point[1]+env['text_offset'][1]]
-            item=block(f,row['label'],origin,env['scale'],center=True,baseline=True,role=f'parent{original}',single_line=True)
+            item=block(f,row['label'],origin,env['scale'],center=True,baseline=True,role=f'parent{original}',single_line=True,approach_label=True)
             if selected is not None:item['color'][3]=128
             option(row['label'],dict(parent=original),item,ordinal=original,selected=selected==original)
         if selected is not None:
@@ -129,7 +137,7 @@ def choice_rows(session,surface,args):
                 if child>=len(points):raise ValueError('Approach children exceed authored point table')
                 point=points[child];used=bool(s.approach_flags[selected*3+child])
                 origin=[point[0]+shared['words'][4],point[1]+shared['words'][5]]
-                item=block(f,row['label'],origin,shared['scale'],center=True,role=f'child{selected}/{child}',single_line=True)
+                item=block(f,row['label'],origin,shared['scale'],center=True,role=f'child{selected}/{child}',single_line=True,approach_label=True)
                 option(row['label'],dict(choice=selected,child=child),item,not used,'Already used' if used else '',
                        parent=selected,ordinal=child)
             options.append(dict(label='Back to parents',action=dict(back=True),enabled=True,reason='',rect=None))

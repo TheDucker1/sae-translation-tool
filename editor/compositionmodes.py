@@ -274,8 +274,15 @@ def approach_choices(out, library, e, state, font):
         raise ImageError('Approach topic/child selection outside preview entries')
     visited, used = state.get('visited', False), state.get('used', False)
     def label(name, value, point, size, rgba, baseline=False):
-        x, y = point; x -= font.measure(units(value), size) // 2
-        out.layers.append(text_layer(name, value, [x, y - size if baseline else y], size, rgba, font))
+        from .choiceart import preview_label
+        wire, ink_width = preview_label(font, value, size)
+        x, y = point; x -= font.measure(units(wire), size) // 2
+        layer = text_layer(name, wire, [x, y - size if baseline else y], size, rgba, font)
+        if ink_width is not None:
+            layer.text = value
+            layer.destination[0] = point[0] - ink_width // 2
+            layer.destination[2] = ink_width
+        out.layers.append(layer)
     def put(name, entry, shape, point, **kw):
         shape = deepcopy(shape); shape['x'], shape['y'] = point
         return visual_sprite(out, name, f'resource.dat:1/{entry}', shape, **kw)

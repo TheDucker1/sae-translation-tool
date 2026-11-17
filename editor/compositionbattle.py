@@ -90,6 +90,7 @@ def introduction(out, e, state, font):
 
 
 def dialogue(out, e, state, font):
+    from .pairspacing import shape_script
     for side in range(2):
         kind = state.get('bubble_' + str(side), 0)
         if kind == 3: continue
@@ -99,7 +100,8 @@ def dialogue(out, e, state, font):
             visual_sprite(out, 'Battle dialogue bubble', f'resource.dat:16/{entry}', shape,
                           scale_x=e['bubble_scale'], scale_y=e['bubble_scale'], tint=tint + [alpha])
         value = state.get('dialogue_' + str(side), '') or 'Dialogue preview'
-        parsed = font.format.ordinary(value)
+        wire = shape_script(value, 0x64, {}, 'text', font.format, getattr(font, 'pair_spacing', None))
+        parsed = font.format.ordinary(wire)
         layer = positioned_plain('Battle dialogue text', parsed['body'], *e['dialogue_positions'][side],
                                  e['width'], font.scale, font.unread, font, offsets=e['dialogue_offsets'])
         add_shadow(out, layer)
@@ -107,6 +109,7 @@ def dialogue(out, e, state, font):
 
 
 def choices(out, library, e, state, font):
+    from .pairspacing import shape_script
     values = state.get('choices', '').splitlines() or ['Choice 1', 'Choice 2', 'Choice 3']
     if len(values) > 3: raise ImageError('Battle choices have up to three visible cards; row0 is the separate timeout route')
     shared = cached(library, 'selection', 'env/env_script_select.dat', selection_environment)
@@ -116,7 +119,8 @@ def choices(out, library, e, state, font):
             low, high, _ = e['pulses'][kind]; pulse = int((low + (high - low) * state.get('pulse', 0) / 100) * 100) / 100
             for entry, rgba in (((4, 1, 7)[kind], e['fill_colors'][control]), ((6, 3, 9)[kind], e['frame_colors'][control])):
                 widget_sprite(out, 'Battle choice widget', entry, e['bubble'], e['choice_positions'][control], e['card_scale'], pulse, rgba)
-        layer = positioned_plain('Battle choice text', value, *e['choice_positions'][control], e['width'], font.scale,
+        wire = shape_script(value, 0x3F2, {}, f'choices[{control+1}].label', font.format, getattr(font, 'pair_spacing', None))
+        layer = positioned_plain('Battle choice text', wire, *e['choice_positions'][control], e['width'], font.scale,
                                  shared['text_colors'][int(state.get('visited', False))], font, offsets=e['choice_offsets'], tags=True)
         out.layers.append(layer)
         point, offset = e['choice_positions'][control], e['label_positions'][control]

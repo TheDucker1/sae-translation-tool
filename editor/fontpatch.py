@@ -1,11 +1,15 @@
 """Asset-only proportional dialogue glyphs through the existing GSF override."""
 import argparse,hashlib,json,math,struct
+import unicodedata
 from pathlib import Path
 from .text import TextPresentation,font_atlas
 
-GENERATOR_REVISION=5
+GENERATOR_REVISION=8
+WORD_SPACE_WIDTHS = range(3, 10)
+DEFAULT_WORD_SPACE_RECORD = 18
 STORAGE_GLYPH=0x1d20
 STORAGE_AMOUNT='7456'
+VIETNAMESE_FACE = Path(__file__).with_name('assets') / 'saekano-rounded-vn' / 'SaekanoRoundedVN-Regular.ttf'
 
 
 def storage_glyph(raw,font):
@@ -54,8 +58,84 @@ def p8_atlas(width,height,coverage):
     return header+texture+coverage+palette
 
 
-def build(root):
-    """Keep original atlas/records/charset and append a separate Latin atlas.
+def vietnamese_characters():
+    """Non-ASCII NFC Vietnamese letters plus the đồng sign."""
+    vowels = 'aăâeêioôơuưy'
+    tones = ('', '\u0300', '\u0301', '\u0309', '\u0303', '\u0323')
+    letters = {
+        unicodedata.normalize('NFC', vowel + tone)
+        for vowel in vowels + vowels.upper()
+        for tone in tones
+    }
+    return ''.join(sorted({letter for letter in letters if not letter.isascii()} | set('Đđ₫')))
+
+
+def vietnamese_glyphs(font, baseline):
+    """Fit accent stacks inside the shared GSF cell with the existing baseline."""
+    from PySide6.QtGui import QFont, QRawFont
+
+    raw = QRawFont(str(VIETNAMESE_FACE), 22, QFont.PreferNoHinting)
+    if not raw.isValid():
+        raise ValueError('Cannot open the bundled Saekano Rounded VN font')
+    characters = vietnamese_characters()
+    indexes = raw.glyphIndexesForString(characters)
+    if len(indexes) != len(characters) or not all(indexes):
+        raise ValueError('The bundled font is missing required Vietnamese glyphs')
+    top_room = baseline - 1
+    bottom_room = font.bitmap_height - baseline - 1
+    if min(top_room, bottom_room) <= 0:
+        raise ValueError('No room for accents in the GSF cell')
+
+    # Keep the x-height and baseline. Compress the area above the x-height and
+    # below the baseline only when this glyph would exceed the native cell.
+    x_height = -raw.pathForGlyph(raw.glyphIndexesForString('x')[0]).boundingRect().top()
+    anchor = min(x_height, top_room * 0.7)
+    glyphs = []
+    for character, index in zip(characters, indexes):
+        codepoint = ord(character)
+        if character in font.cached:
+            raise ValueError(f'Original GSF already caches Vietnamese glyph U+{codepoint:04X}')
+        path = raw.pathForGlyph(index)
+        if path.isEmpty():
+            raise ValueError(f'Empty Vietnamese glyph U+{codepoint:04X}')
+        bounds = path.boundingRect()
+        top, bottom = -bounds.top(), bounds.bottom()
+        top_scale = (top_room - anchor) / (top - anchor) if top > top_room else 1
+        bottom_scale = bottom_room / bottom if bottom > bottom_room else 1
+        if top_scale < 1 or bottom_scale < 1:
+            for i in range(path.elementCount()):
+                point = path.elementAt(i)
+                y = point.y
+                if y < -anchor:
+                    y = -anchor + (y + anchor) * top_scale
+                elif y > 0:
+                    y *= bottom_scale
+                path.setElementPositionAt(i, point.x, y)
+        fitted = path.boundingRect()
+        if fitted.top() < -baseline or fitted.bottom() > font.bitmap_height - baseline:
+            raise ValueError(f'Vietnamese glyph U+{codepoint:04X} exceeds the GSF cell')
+        left = math.floor(fitted.left())
+        ink = math.ceil(fitted.right()) - left
+        glyphs.append(dict(character=codepoint, source=character, left=left,
+                           width=dialogue_width(ink, font, 1), path=path, fixed=False))
+    return glyphs
+
+
+def word_space_record(font, pixels):
+    """Convert a whole default-dialogue advance to the native ASCII-space record width."""
+    def advance(width):
+        return int(int(width * (font.utility / 36 if font.utility else 1) * 0.5) * font.scale)
+
+    if pixels is None or pixels == advance(DEFAULT_WORD_SPACE_RECORD):
+        return DEFAULT_WORD_SPACE_RECORD, advance(DEFAULT_WORD_SPACE_RECORD)
+    for width in range(1, 256):
+        if advance(width) == pixels:
+            return width, pixels
+    raise ValueError('The source font scale cannot represent this word-space advance')
+
+
+def build(root, *, word_space_px=None):
+    """Keep original atlas/records/charset and append a Latin and Vietnamese atlas.
 
     Full-width aliases avoid PVF's half-width measurement factor. Source ink is
     optically cropped because the authored Latin hmtx itself is fixed-width.
@@ -68,6 +148,8 @@ def build(root):
     from PySide6.QtCore import QByteArray,QPointF
     from PySide6.QtGui import QRawFont,QFont,QImage,QPainter,QGlyphRun,QColor,QGuiApplication
     if QGuiApplication.instance() is None:raise ValueError('A Qt GUI application is required to rasterize the font asset')
+    if word_space_px is not None and (type(word_space_px) is not int or word_space_px not in WORD_SPACE_WIDTHS):
+        raise ValueError(f'Word space must be {WORD_SPACE_WIDTHS.start}–{WORD_SPACE_WIDTHS.stop - 1} game pixels')
     root=Path(root);original=(root/'Font.gsf').read_bytes();parts=sections(original)
     font=TextPresentation(root);height=font.bitmap_height;nominal=36
     if height!=24:raise ValueError('This generator requires the original24px GSF asset; do not stack font patches')
@@ -98,44 +180,66 @@ def build(root):
     bottom=max(math.ceil(raw.boundingRect(g['index']).bottom()) for g in glyphs)
     if baseline+bottom>height:raise ValueError('Latin ink exceeds the original shared bitmap height')
     glyphs.append(storage_glyph(raw,font))
-    # Native ASCII-space measurement halves the recorded width. Its blank mask
-    # has no ink, so a doubled metadata width supplies a normal short word space.
-    glyphs.append(dict(character=32,source=' ',index=None,left=0,width=18,fixed=False))
+    # ASCII-space measurement halves the recorded width. The bitmap stays blank.
+    space_width, space_advance = word_space_record(font, word_space_px)
+    glyphs.append(dict(character=32,source=' ',index=None,left=0,width=space_width,fixed=False))
+    vietnamese=vietnamese_glyphs(font,baseline)
+    glyphs.extend(vietnamese)
     atlas_width=512;atlas_height=512;coverage=bytearray(atlas_width*atlas_height)
-    records=[];x=1;y=1;report=[]
+    records=[];glyph_records={};x=1;y=1;report=[]
     for g in glyphs:
         width=g['width']
         if x+width+1>atlas_width:x=1;y+=height+2
-        if y+height+1>atlas_height:raise ValueError('Latin atlas exceeded bounded capacity')
+        if y+height+1>atlas_height:raise ValueError('Font atlas exceeded bounded capacity')
         image=QImage(width,height,QImage.Format_RGBA8888);image.fill(0)
-        if g['index'] is not None or g.get('runs'):
+        if 'path' in g:
+            painter=QPainter(image)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.translate(-g['left'],baseline)
+            painter.fillPath(g['path'],QColor('white'))
+            painter.end()
+        elif g['index'] is not None or g.get('runs'):
             runs=g.get('runs',[(g['index'],-g['left'])])
             run=QGlyphRun();run.setRawFont(raw);run.setGlyphIndexes([i for i,x in runs]);run.setPositions([QPointF(x,baseline) for i,x in runs])
             painter=QPainter(image);painter.setPen(QColor('white'));painter.translate(g.get('padding',0),0);painter.scale(g.get('ink_scale',1),1);painter.drawGlyphRun(QPointF(0,0),run);painter.end()
         pixels=bytes(image.constBits())
         for row in range(height):
             for col in range(width):coverage[(y+row)*atlas_width+x+col]=pixels[(row*width+col)*4+3]
-        records.append(struct.pack('<4H2B',g['character'],len(parts)-2,x,y,width,height))
+        record = (len(parts)-2,x,y,width,height)
+        glyph_records[chr(g['character'])] = record
+        records.append(struct.pack('<4H2B',g['character'],*record))
         report.append(dict(codepoint=g['character'],source=g['source'],record_width=width,atlas_rect=[x,y,width,height],fixed_cursor=g['fixed']))
         x+=width+2
+    scales = [font.scale]
+    profile_path = root/'env/env_otaku_mode.dat'
+    if profile_path.is_file():
+        from .compositionmodes import profile_environment
+        scales.append(profile_environment(profile_path.read_bytes())['response_scale'])
+    from .pairspacing import build_pairs
+    pairing, aliases = build_pairs(font, scales, coverage, atlas_width, glyph_records, vietnamese_characters())
+    records.extend(struct.pack('<4H2B', ord(char), *record) for char, record in aliases.items())
     atlas=p8_atlas(atlas_width,atlas_height,bytes(coverage));font_atlas(atlas)
     output=pack(parts[:-2]+[atlas,parts[-2]+b''.join(records),parts[-1]])
     manifest=dict(format='saekano-proportional-font',version=1,generator_revision=GENERATOR_REVISION,source_sha256=hashlib.sha256(original).hexdigest(),
         font_sha256=hashlib.sha256(output).hexdigest(),font_file='Font.gsf',executable_changes=False,
         nominal=nominal,bitmap_height=height,glyphs=report,
-        scope='Proportional dialogue aliases and readable fixed-cursor Latin bitmap cells from the same font face.',
+        scope='Proportional dialogue aliases, readable fixed-cursor Latin and precomposed Vietnamese glyphs.',
         ui_bitmap_cells=True,ui_cell_ink_width=11,
+        word_space=dict(pixels=space_advance, scale='default_dialogue', record_width=space_width),
+        pair_spacing=pairing,
+        vietnamese=dict(face='Saekano Rounded VN',glyph_count=len(vietnamese),input_form='NFC',
+            vector_sha256=hashlib.sha256(VIETNAMESE_FACE.read_bytes()).hexdigest()),
         native_storage_amount=dict(codepoint=STORAGE_GLYPH,text=STORAGE_AMOUNT,reason='Native capacity value is appended as one UTF16 unit'),
         dialogue_spacing='native_scaled_ink_plus_gap',dialogue_gap_pixels=1,
         limitations=['Simple DrawString names/UI still use fixed cursor advances.',
                     'Use matching patched font metrics when rewrapping scripts.',
-                    'ASCII spaces become shorter globally; Japanese glyph records and atlases are unchanged.',
-                    'No kerning pairs or shaping; per-glyph optical spacing.'])
+                    'The ASCII space width is shared by measured text. Other text scales can round differently.',
+                    'Pair spacing is limited to verified plain measured text.'])
     return output,manifest
 
 
-def make_asset(root):
-    data,manifest=build(root)
+def make_asset(root, *, word_space_px=None):
+    data,manifest=build(root, word_space_px=word_space_px)
     return dict(data_hex=data.hex(),manifest=manifest)
 
 
@@ -148,8 +252,25 @@ def validate_asset(asset,root):
     if hashlib.sha256((Path(root)/'Font.gsf').read_bytes()).hexdigest()!=manifest.get('source_sha256'):
         raise ValueError('Font asset belongs to a different source Font.gsf')
     original=sections((Path(root)/'Font.gsf').read_bytes());changed=sections(data)
-    if changed[:-3]!=original[:-2] or not changed[-2].startswith(original[-2]) or changed[-1]!=original[-1]:
+    if (changed[:-3]!=original[:-2] or not changed[-2].startswith(original[-2]) or changed[-1]!=original[-1]
+            or len(changed[-2]) % 10):
         raise ValueError('Font asset changed protected original glyphs/charset')
+    from .pairspacing import config_for
+    config = config_for(asset)
+    if config:
+        glyphs = {chr(code): (atlas, x, y, width, height) for code, atlas, x, y, width, height in struct.iter_unpack('<4H2B', changed[-2])}
+        reserved = config['restore']
+        if set(reserved) != (set(config['accents'].values()) | set(config['pairs'].values())):
+            raise ValueError('Pair-spacing charset does not match its glyph mapping')
+        for char, base in reserved.items():
+            alias = glyphs[char]
+            original_glyph = glyphs[base]
+            if (alias[:3] != original_glyph[:3] or not 0 < alias[3] <= original_glyph[3]
+                    or alias[4] != original_glyph[4] or char.encode('shift_jis').decode('cp932') != char):
+                raise ValueError('Invalid proportional text carrier glyph')
+        if (any(reserved[char] != pair[0] or len(pair) != 2 for pair, char in config['pairs'].items())
+                or any(glyphs[char] != glyphs[base] for base, char in config['accents'].items())):
+            raise ValueError('Pair-spacing aliases changed their base glyph')
     font_atlas(changed[-3])
 
 
@@ -160,6 +281,8 @@ def effective_font(project,font):
     digest=asset['manifest']['font_sha256']
     if getattr(font,'asset_sha256',None)==digest:return font
     result=TextPresentation(project.root,font_asset=bytes.fromhex(asset['data_hex']));result.asset_sha256=digest
+    from .pairspacing import config_for
+    result.pair_spacing = config_for(asset)
     result.source_font=original
     return result
 

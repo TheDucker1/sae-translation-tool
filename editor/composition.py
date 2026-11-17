@@ -109,16 +109,16 @@ def text_layer(name, text, position, size, rgba, font, *, center=False):
 
 class EnvironmentLibrary:
     """Small immutable environment snapshots; changes require an explicit refresh."""
-    def __init__(self, root, *, catalog=None, ui_text_assets=None, ui_text_catalog=None):
+    def __init__(self, root, *, catalog=None, ui_text_assets=None, ui_text_catalog=None, pairing=None):
         self.root = root; self.files = {}; self.decoded = {}; self.catalog = catalog
         self.members = {}; self.member_sources = {}
-        self.ui_text_assets=dict(ui_text_assets or {});self.ui_text_catalog=ui_text_catalog
+        self.ui_text_assets=dict(ui_text_assets or {});self.ui_text_catalog=ui_text_catalog;self.pairing=pairing
 
     def effective(self,source,route,data):
         if not self.ui_text_assets:return data
         from .uitext import effective_node
         identity=source+':'+('/'.join(map(str,route)))
-        if identity in self.ui_text_catalog.nodes:return effective_node(self.ui_text_catalog,identity,self.ui_text_assets,data)
+        if identity in self.ui_text_catalog.nodes:return effective_node(self.ui_text_catalog,identity,self.ui_text_assets,data,pairing=self.pairing)
         return data
 
     def member(self, source, route):
@@ -318,11 +318,14 @@ def message_layout(e, state, font):
         for i, shape in enumerate(e['cursors']):
             out.layers.append(blit(f'Advance cursor {i}', 1, 2, shape, offset=(0, slide), alpha=alpha))
     if font is not None and state.get('text'):
-        parsed = font.format.ordinary(state['text'], geometry_only=True)
+        from .pairspacing import readable, shape_script
+        pairing=getattr(font,'pair_spacing',None)
+        wire = shape_script(state['text'], 0x64, {}, '', font.format, pairing)
+        parsed = font.format.ordinary(wire, geometry_only=True)
         size = int(font.utility * font.scale)
         glyphs = font.layout(parsed['body'], e['width'], font.scale, ruby=parsed['ruby'])
         origin = [e['text_position'][0], e['text_position'][1] + slide]
-        body = Layer('Dialogue text', kind='text', text=parsed['body'], size=size,
+        body = Layer('Dialogue text', kind='text', text=readable(parsed['body'], pairing), size=size,
             destination=[*origin, e['width'], max((g['y'] for g in glyphs), default=0) + size], rgba=font.unread[:])
         body.glyphs = [dict(code=g['code'], rect=[origin[0] + g['x'], origin[1] + g['y'],
                        math.ceil(font.cached[chr(g['code'])][3] * size / font.bitmap_height) if chr(g['code']) in font.cached else
