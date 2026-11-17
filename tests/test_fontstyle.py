@@ -60,7 +60,7 @@ class FontStyleChecks(unittest.TestCase):
         font.glyph = lambda code: dict(width=source_widths[chr(code)], rgba='ffffffff' * (24 * source_widths[chr(code)]))
         atlas = ChoiceAtlas(font)
         wire, width = atlas.encode('iWiW', 24)
-        self.assertEqual(width, 38)
+        self.assertEqual(width, 41)
         self.assertLess(len(wire), len('iWiW'))
         self.assertEqual(atlas.encode('iWiW', 24), (wire, width))
         self.assertEqual(atlas.encode('日本語', 24), ('日本語', None))
@@ -72,14 +72,16 @@ class FontStyleChecks(unittest.TestCase):
         ink = [i * 24 + col for i, c in enumerate(wire) for x, y, w in [records[c]]
                for col in range(w) if pixels[((y * stride + x + col) * 4) + 3]]
         self.assertEqual((min(ink), max(ink)), (0, width - 1))
+        self.assertEqual(set(range(width)) - set(ink), {4, 20, 25})
 
-    def test_approach_c_tucks_under_ink_overhang_only_with_clearance(self):
-        from editor.choiceart import c_pair_reduction
+    def test_approach_optical_spacing_accounts_for_ink_clearance(self):
+        from editor.choiceart import optical_shift
 
         left = b'\xff\xff\0\0' * 24
         right = b'\0\xff\xff' * 24
-        self.assertEqual(c_pair_reduction(left, 4, right, 3, 4), 2)
-        self.assertEqual(c_pair_reduction(left, 4, right, 3, 2), 0)
+        self.assertEqual(optical_shift(left, 4, right, 3, 6), -2)
+        self.assertEqual(optical_shift(left, 4, right, 3, 2), 0)
+        self.assertEqual(optical_shift(left, 4, right, 3, 1), 1)
 
     def test_vietnamese_bitmap_geometry_preserves_tall_and_deep_marks(self):
         from PySide6.QtWidgets import QApplication

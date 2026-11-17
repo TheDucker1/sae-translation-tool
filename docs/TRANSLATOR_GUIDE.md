@@ -182,6 +182,9 @@ strips with font revision 8. `format_text` reports `packed_label_width` and the
 usable card width. Use the profile scene's Approach topics / choices preview to
 review the placement. Export prepares the matching font records and script
 labels together.
+Upgrade to font revision 9 before reviewing Vietnamese Approach labels. The
+revised `ơ` and `ư` horns and optical letter gaps appear in the packed preview
+and export.
 Review `ui_changes` with script/font proposals and Apply once; Undo restores all
 three. `include_ui=false` explicitly limits the batch to script/font work.
 UI cleanup now normalizes the selected font first, then checks each consumer's

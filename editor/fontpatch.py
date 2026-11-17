@@ -4,7 +4,7 @@ import unicodedata
 from pathlib import Path
 from .text import TextPresentation,font_atlas
 
-GENERATOR_REVISION=8
+GENERATOR_REVISION=9
 WORD_SPACE_WIDTHS = range(3, 10)
 DEFAULT_WORD_SPACE_RECORD = 18
 STORAGE_GLYPH=0x1d20

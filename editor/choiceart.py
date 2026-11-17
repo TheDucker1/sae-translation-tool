@@ -1,5 +1,7 @@
 """Pack proportional Approach labels for Saekano's fixed-cursor DrawString."""
 from dataclasses import dataclass
+from functools import lru_cache
+from statistics import median
 import struct
 import unicodedata
 
@@ -11,7 +13,6 @@ END_CARRIER = 0xF900
 ATLAS_EDGE = 512
 TILES_PER_ROW = 20
 ROWS_PER_ATLAS = 19  # First row is blank and holds measured centering records.
-HORNED_U = frozenset('ưừứửữự')
 
 
 @dataclass(frozen=True)
@@ -24,17 +25,30 @@ def measured_width(record_width):
     return 1 + record_width * CELL // 36
 
 
-def c_pair_reduction(left, left_width, right, right_width, advance):
-    """Tuck c under the horn's overhang while keeping a pixel between ink masks."""
-    clearance = 3
+@lru_cache(maxsize=512)
+def ink_edges(mask, width, threshold):
+    rows = []
     for y in range(CELL):
-        a = left[y * left_width:(y + 1) * left_width]
-        b = right[y * right_width:(y + 1) * right_width]
-        end = max((x + 1 for x, alpha in enumerate(a) if alpha), default=0)
-        start = next((x for x, alpha in enumerate(b) if alpha), right_width)
-        if end and start < right_width:
-            clearance = min(clearance, advance + start - end)
-    return max(0, clearance - 1)
+        ink = [x for x, alpha in enumerate(mask[y * width:(y + 1) * width]) if alpha >= threshold]
+        rows.append((ink[0], ink[-1] + 1) if ink else None)
+    return tuple(rows)
+
+
+def optical_shift(left, left_width, right, right_width, advance):
+    """Move the right letter in whole pixels, using solid ink and antialiasing."""
+    def gaps(threshold):
+        a = ink_edges(left, left_width, threshold)
+        b = ink_edges(right, right_width, threshold)
+        return [advance + r[0] - l[1] for l, r in zip(a, b) if l and r]
+
+    solid = gaps(128)
+    if len(solid) < 4:
+        return 0
+    typical = median(solid)
+    clearance = min(gaps(1))
+    if typical <= 1 and min(solid) <= 0:
+        return 1
+    return -max(0, min(2, int(typical - 2.5), clearance - 1))
 
 
 def approach_metrics(root, utility):
@@ -81,9 +95,9 @@ def make_label(font, text, size):
         mask = bytes.fromhex(glyph['rgba'])[3::4]
         ink = max((i % record_width + 1 for i, alpha in enumerate(mask) if alpha), default=0)
         if ink:
-            if previous in HORNED_U and char == 'ｃ':
+            if previous.isalpha() and char.isalpha():
                 prior_x, prior_mask, prior_width, _ = draws[-1]
-                pen -= c_pair_reduction(prior_mask, prior_width, mask, record_width, pen - prior_x)
+                pen += optical_shift(prior_mask, prior_width, mask, record_width, pen - prior_x)
             draws.append((pen, mask, record_width, ink))
             width = max(width, pen + ink)
         # Work in the 24px bitmap grid. Keep every accent and the existing font's

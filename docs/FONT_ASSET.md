@@ -86,6 +86,10 @@ stacked marks and descenders into the 24 px bitmap cell. Auto-fit measures the
 new records in dialogue and other measured layouts. Fixed-cell UI still uses its
 native cursor steps.
 
+Revision 9 makes the horn on `ơ` and `ư` rise with less sideways overhang.
+Upgrade through Auto-fit to use the revised outlines and retain your saved word
+spacing selection.
+
 Run **Auto-fit text…** with the font asset option enabled, apply the font upgrade,
 and export through **Export game…**. Use NFC (precomposed) Vietnamese in game
 text. The OpenType accent positioning in the vector face is available to desktop
@@ -137,8 +141,11 @@ editor packs the ink into 24 px strips and adds transparent glyphs to give the
 native centering function the measured width it needs. Preview and game export
 use the same strips. Project text stays editable. Export adds the bitmap glyphs
 and their lookup codes while retaining the original choice conditions and targets.
-The `ư` family tucks a following lowercase `c` under the horn when the two ink
-masks have room. This adjustment applies within the packed Approach labels.
+Packed Approach labels also adjust the gaps within words using the 24 px ink
+masks. They tighten visibly open pairs and give touching strokes some room.
+The review used attested Vietnamese syllables in lowercase and initial-capital
+contexts, including `ươi`, `ười`, and the different tone marks. Word spacing
+uses the selected font's space glyph.
 
 Use `format_text` to check the width against the usable card interior. Preview
 the labels in the **Profiles / approach** scene under **Approach topics / choices**.

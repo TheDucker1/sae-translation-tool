@@ -263,10 +263,10 @@ def build(output):
     builder.setupNameTable({
         'familyName': 'Saekano Rounded VN',
         'styleName': 'Regular',
-        'uniqueFontIdentifier': 'SaekanoRoundedVN-Regular 1.000',
+        'uniqueFontIdentifier': 'SaekanoRoundedVN-Regular 1.001',
         'fullName': 'Saekano Rounded VN Regular',
         'psName': 'SaekanoRoundedVN-Regular',
-        'version': 'Version 1.000',
+        'version': 'Version 1.001',
         'description': 'Independently drawn rounded Latin outlines with Vietnamese coverage.',
     })
     builder.setupOS2(
