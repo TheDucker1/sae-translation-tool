@@ -134,19 +134,15 @@ class Contracts:
         result=approach_environment(self.c.source('env/env_approach.dat'))
         from .composition import message_environment
         cursors=message_environment(self.c.source('env/env_message_window.dat'))['cursors']
-        excludes=[]
         from .composition import blit
-        for shape,point in zip(cursors,result['cursor_positions']):
-            shape=deepcopy(shape);shape['x'],shape['y']=point;excludes.append(blit('',1,2,shape).destination)
+        from .uipanel import result_contract
         response_box = blit('', 1, 0, e['response_window']).destination
         response_cursors = []
         travel = int(e['cursor_travel'])
         for shape in e['response_cursors']:
             x, y, width, height = blit('', 1, 0, shape).destination
             response_cursors.append([x, y + min(0, travel), width, height + abs(travel)])
-        self.bind(e['format'],'profile_result_template',renderer='measured_layout',width=result['text_width'],
-            scale=result['text_scale'],height=min(544,result['frame']['y']+result['frame']['h'])-result['text_origin'][1],tags=True,
-            panel_asset='resource.dat:1/12',panel_shape=result['fill'],origin=result['text_origin'],excludes=excludes,
+        self.bind(e['format'],'profile_result_template',renderer='measured_layout',tags=True,**result_contract(result,cursors),
             scene=dict(family='profile',state=dict(view='result')))
         for node in self.c.nodes.values():
             if not node['table']:continue

@@ -114,6 +114,7 @@ class VisualContext:
 
     def bind(self, workspace):
         root = Path(workspace.project.root).resolve(); key = (str(root), id(getattr(workspace._runtime, 'original', None)))
+        self.root = root
         if key != self.source_key:
             catalog = build_catalog(root, getattr(workspace._runtime, 'descriptions', {}))
             names = ['Font.gsf', 'DFHSR4.TTC', *('env/' + name + '.dat' for name in (
@@ -131,14 +132,16 @@ class VisualContext:
             self.scenes.clear(); self.project_revision = workspace.project.revision
             from .uitext import get_catalog
             ui=getattr(workspace.project,'ui_text_assets',{})
+            asset=getattr(workspace.project,'font_asset',None)
+            font=self.font(workspace)[0] if ui and asset else None
             self.library=EnvironmentLibrary(root,catalog=self.catalog,ui_text_assets=ui,ui_text_catalog=get_catalog(workspace.project) if ui else None,
-                                            pairing=config_for(getattr(workspace.project, 'font_asset', None)))
+                                            pairing=config_for(asset),font=font)
         replacements = dict(getattr(workspace.project, 'texture_assets', {}))
         replacement_key = fingerprint({key: value['png_sha256'] for key, value in replacements.items()})
         if self.replacement_key != (self.source_key, replacement_key):
             self.replacements = replacements; self.replacement_key = (self.source_key, replacement_key)
             self.loader = TextureLoader(AssetResolver(self.catalog, replacements)); self.scenes.clear()
-        self.root = root; self.verify()
+        self.verify()
         return self
 
     def verify(self):
@@ -153,6 +156,7 @@ class VisualContext:
             # Parsing creates no QRawFont. Immutable font bytes/tables may be
             # shared; raster objects/caches belong to the calling thread only.
             self.font_template = TextPresentation(self.root, font_asset=bytes.fromhex(asset['data_hex']) if asset else None)
+            self.font_template.asset_sha256 = key[1]
             self.font_template.pair_spacing = config_for(asset)
             self.font_template_key = key
         def fresh():

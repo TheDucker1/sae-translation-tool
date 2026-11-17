@@ -75,8 +75,9 @@ and script, including message windows, battle dialogue/choices, approach results
 and fixed-position labels. Omit dialogue_mode in MCP calls. Battle ownership
 follows native file loading and resets at file changes. GUI fitting has no global
 message/battle mode selector. Existing hard breaks/controls/ruby are preserved.
-Enable Reflow existing line breaks (MCP reflow=true) to repair earlier wrong-width
-wrapping. This treats old breaks as word separators before fitting again.
+Enable **Reflow existing line breaks** (MCP `reflow=true`) to repair wrapping
+after changing the font or word space. Auto-fit recalculates native breaks and
+timed wrap padding using the proposed metrics.
 Timed SP QUE dialogue uses spaces to trigger the native automatic wrap where
 explicit breaks are forbidden. The formatter validates the resulting word/line
 positions with the native layout algorithm and preserves tag text and times.
@@ -101,10 +102,8 @@ opcodes by cloning their branch logic. Plans expire on restart or after four new
 plans, and stale plans reject. skip_japanese defaults to a kana/Han check outside
 speaker/control/reading text; other scripts remain eligible. It is not linguistic
 review; mixed Japanese or Han-only Chinese needs disabling the filter.
-GUI Auto-fit defaults to Current file; choose Whole project for translations
-spanning many scripts. Analyze is not Apply, and Save/export does not auto-wrap.
-The player uses fixed Latin character advances; inserted breaks preserve words
-but cannot make the player's font spacing proportional.
+GUI Auto-fit defaults to **Current file**. Choose **Whole project** for translations
+spanning many scripts. Save and export retain the wrapping last applied.
 
 For wider readable Latin glyphs on the refactored PVF player, opt into
 full_width_latin=true in format_text, analyze_text_cleanup or a TranslationEdit.
@@ -177,11 +176,11 @@ authored. The selected font applies reviewed narrower pairs in plain dialogue,
 visible battle choices, and profile responses. Keep ordinary NFC text and
 regular spaces in translation edits. `get_status` and Auto-fit plans expose the
 exact approved pairs grouped by variant in `font_asset.pair_spacing.variant_details`.
-Translated plain Approach topic and choice labels can use proportional bitmap
-strips with font revision 8. `format_text` reports `packed_label_width` and the
-usable card width. Use the profile scene's Approach topics / choices preview to
-review the placement. Export prepares the matching font records and script
-labels together.
+Translated plain scenario choices, Approach topics and Approach subchoices can
+use proportional bitmap strips with font revision 8 or later. `format_text`
+reports `packed_label_width` and the usable card width. Use Scenario choices or
+the profile scene's Approach topics / choices preview to review the placement.
+Export prepares the matching font records and script labels together.
 Upgrade to font revision 9 before reviewing Vietnamese Approach labels. The
 revised `ơ` and `ư` horns and optical letter gaps appear in the packed preview
 and export.
@@ -194,10 +193,13 @@ Result templates are checked with every authored character/category substitution
 Profile responses/results use the current panel texture's visible area and reserve
 the advance cursor. Replay captions use their own two-row panel; profile tips
 retain their separate three-row/count setting. These rules are not interchangeable.
-In Auto-fit, select a UI row and use **Preview selected UI…** to render checked
-proposals before Apply. In **UI text…**, **Preview field…** also renders an unsaved
-draft. Both use the same effective font/assets as export without applying changes.
-MCP provides `get_ui_text_preview(field_id,plan_id)` for the same review.
+In Auto-fit, select a script or UI row and use **Preview selected…** before Apply.
+Choose a frame for split dialogue or multiple outcomes. Turn on **Preview before
+changes** to compare with the current text and font. **UI text… → Preview field…**
+also renders an unsaved draft. MCP provides `get_text_cleanup_preview` for script
+proposals and `get_ui_text_preview` for UI fields.
+Script Approach results fit inside the panel texture and leave room for its
+advance cursor. Auto-fit reports overflow when an outcome needs more rows.
 Overflow requires shortening when a consumer cannot wrap. `retained` identifies
 compatibility strings without a drawn consumer in the audited Vita target;
 these remain editable/exportable and are not counted as visually fitted.

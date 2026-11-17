@@ -360,19 +360,35 @@ class TranslationWorkspace:
     def get_ui_text_preview(self,field_id:Id,plan_id:Id|None=None,include_image:bool=True,
                             max_size:Annotated[int,Field(ge=64,le=2048,strict=True)]=1024,limit:Limit=30)->dict[str,Any]:
         """Preview a field's source-bound screen, optionally with an unapplied Auto-fit plan. Returns image plus layer/geometry data. No project mutation. Missing native context rejects explicitly; never invents a scene."""
-        from copy import copy
-        from collections import OrderedDict
-        import threading
         from .uipreview import preview_snapshot
         plan=None
         if plan_id is not None:
             plan=getattr(self,'_cleanup_plans',{}).get(plan_id)
             if plan is None:raise ValueError('Unknown/expired cleanup plan; analyze again')
         project,recipe,_,_=preview_snapshot(self.project,field_id,plan=plan)
+        result=self.render_preview_snapshot(project,recipe,include_image,max_size,limit)
+        result.update(field_id=field_id,proposal_plan_id=plan_id)
+        return result
+
+    @locked
+    def get_text_cleanup_preview(self,plan_id:Id,command_id:Id,frame:Index=0,before:bool=False,
+                                 include_image:bool=True,max_size:Annotated[int,Field(ge=64,le=2048,strict=True)]=1024,
+                                 limit:Limit=30)->dict[str,Any]:
+        """Render a script text proposal with the plan's font and breaks before applying. Frame is zero-based; see frames for page/outcome names. Use before=true to compare against the current project. Returns a static UI composition."""
+        from .uipreview import script_preview_snapshot
+        plan=getattr(self,'_cleanup_plans',{}).get(plan_id)
+        if plan is None:raise ValueError('Unknown/expired cleanup plan; analyze again')
+        project,recipe,_,frames=script_preview_snapshot(self.project,command_id,plan,frame,before=before)
+        result=self.render_preview_snapshot(project,recipe,include_image,max_size,limit)
+        result.update(command_id=command_id,proposal_plan_id=plan_id,frame=frame,frames=frames,before=before)
+        return result
+
+    def render_preview_snapshot(self,project,recipe,include_image,max_size,limit):
+        from collections import OrderedDict
         base=self.visual_context();view=copy(self);view.project=project
         context=copy(base);context.project_revision=None;context.scenes=OrderedDict();context.local=threading.local()
         context.bind(view);result=context.scene(view,recipe['family'],recipe['state'],include_image,max_size,limit)
-        result.update(field_id=field_id,proposal_plan_id=plan_id,read_only_preview=True)
+        result['read_only_preview']=True
         base.scenes.update(context.scenes)
         while len(base.scenes)>8:base.scenes.popitem(last=False)
         return result

@@ -27,6 +27,8 @@ def substitute(value,arguments):
 
 
 class ConsumerLayout(TextLayoutService):
+    normalize_script_font = False  # UI fields are normalized by their native contracts.
+
     def __init__(self,font,contract,arguments=None):
         super().__init__(font,{});self.contract=contract;self.arguments=arguments
         if contract['width']<=0 or contract['height']<=0 or not math.isfinite(contract['scale']) or contract['scale']<=0:

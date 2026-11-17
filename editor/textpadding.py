@@ -3,9 +3,9 @@ import math
 import re
 
 
-def pad_breaks(service,source,replacements,lines,body,hyphens,spec):
+def pad_breaks(service,source,replacements,lines,body,hyphens,hyphen,spec):
     font=service.font;formatter=font.format
-    planned=[body[a:b]+('-' if b in hyphens else '') for a,b in lines]
+    planned=[body[a:b]+(hyphen if b in hyphens else '') for a,b in lines]
     expected=[(ord(c),line) for line,text in enumerate(planned) for c in text if not c.isspace()]
     events=[(a,b,text) for a,b,text in sorted(replacements) if formatter.break_char in text]
     padding={a:1 for a,_,_ in events}

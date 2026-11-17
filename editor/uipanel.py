@@ -1,5 +1,17 @@
 """Inscribed text areas from actual source/replacement UI panel alpha."""
+from copy import deepcopy
 from .composition import blit
+
+
+def result_contract(result, cursors):
+    bounds = []
+    for shape, point in zip(cursors, result['cursor_positions']):
+        shape = deepcopy(shape)
+        shape['x'], shape['y'] = point
+        bounds.append(blit('', 1, 2, shape).destination)
+    return dict(width=result['text_width'], scale=result['text_scale'],
+        height=min(544, result['frame']['y']+result['frame']['h'])-result['text_origin'][1],
+        panel_asset='resource.dat:1/12', panel_shape=result['fill'], origin=result['text_origin'], excludes=bounds)
 
 
 def panel_regions(project,catalog,font,contract):

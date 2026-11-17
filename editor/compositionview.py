@@ -85,7 +85,7 @@ class CompositionBrowser(QDialog):
         self.catalog = catalog; self.font = font; self.font_consumer = FontConsumer(font) if font else None
         self.replacements = dict(replacements or {})
         self.ui_text_assets=dict(ui_text_assets or {});self.ui_text_catalog=ui_text_catalog
-        self.library = EnvironmentLibrary(catalog.root, catalog=catalog,ui_text_assets=self.ui_text_assets,ui_text_catalog=ui_text_catalog,pairing=getattr(font,'pair_spacing',None)); self.loader = TextureLoader(AssetResolver(catalog, {} if self.original.isChecked() else self.replacements))
+        self.library = EnvironmentLibrary(catalog.root, catalog=catalog,ui_text_assets=self.ui_text_assets,ui_text_catalog=ui_text_catalog,pairing=getattr(font,'pair_spacing',None),font=font); self.loader = TextureLoader(AssetResolver(catalog, {} if self.original.isChecked() else self.replacements))
         self.backdrop.blockSignals(True); self.backdrop.clear(); self.backdrop.addItem('Neutral matte', None)
         for a in catalog.assets:
             if a.source == 'resource.dat' and len(a.route) == 2 and a.route[0] in (5, 9) and a.status == 'Ready':
@@ -120,7 +120,7 @@ class CompositionBrowser(QDialog):
         if font is not None:self.font = font
         if not self.catalog:return
         if ui_text_assets is not None:self.ui_text_assets=dict(ui_text_assets);self.ui_text_catalog=ui_text_catalog
-        self.library=EnvironmentLibrary(self.catalog.root,catalog=self.catalog,ui_text_assets=self.ui_text_assets,ui_text_catalog=self.ui_text_catalog,pairing=getattr(self.font,'pair_spacing',None))
+        self.library=EnvironmentLibrary(self.catalog.root,catalog=self.catalog,ui_text_assets=self.ui_text_assets,ui_text_catalog=self.ui_text_catalog,pairing=getattr(self.font,'pair_spacing',None),font=self.font)
         self.loader = TextureLoader(AssetResolver(self.catalog, {} if self.original.isChecked() else replacements))
         self.font_consumer = FontConsumer(self.font) if self.font else None
         self.rebuild()
@@ -135,7 +135,7 @@ class CompositionBrowser(QDialog):
                         'slots': 'Preview chapter\nPreview dialogue', 'backlog': 'Sample dialogue1\nSample dialogue2\nSample dialogue3'}
             self.text.blockSignals(True); self.text.setPlainText(self.family_text.get(key, defaults.get(key, ''))); self.text.blockSignals(False)
             self.last_family = key
-        self.selected.setMaximum(59 if key == 'slots' else 199 if key == 'backlog' else 3 if key == 'title' else 4)
+        self.selected.setMaximum(59 if key == 'slots' else 199 if key == 'backlog' else 3 if key == 'title' else 5 if key == 'profile' else 4)
         self.selected.setMinimum(-1 if key in ('choices', 'dialogs') else 0)
         self.selected.setSpecialValueText('No focus')
         for widget in (self.variant, self.press_start): widget.setEnabled(key == 'title')
@@ -188,7 +188,7 @@ class CompositionBrowser(QDialog):
 
     def refresh(self):
         if self.catalog:
-            self.library = EnvironmentLibrary(self.catalog.root, catalog=self.catalog,ui_text_assets=self.ui_text_assets,ui_text_catalog=self.ui_text_catalog,pairing=getattr(self.font,'pair_spacing',None)); self.rebuild()
+            self.library = EnvironmentLibrary(self.catalog.root, catalog=self.catalog,ui_text_assets=self.ui_text_assets,ui_text_catalog=self.ui_text_catalog,pairing=getattr(self.font,'pair_spacing',None),font=self.font); self.rebuild()
 
     def rebuild(self):
         if not self.catalog: return

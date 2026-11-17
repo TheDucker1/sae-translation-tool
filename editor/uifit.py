@@ -1,6 +1,6 @@
 """Asset-backed profile tips and explicit UI fitting coverage."""
 import re
-from .text import units,unicode_text
+from .text import cursor_advance,units,unicode_text
 
 
 TIP_COLUMNS='Profile tips column limit'
@@ -23,7 +23,7 @@ def profile_context(catalog,records):
 
 
 def fixed_width(text,size):
-    return sum(size//2 if 0x20<=ord(c)<=0x7e or 0xff61<=ord(c)<=0xffa0 else size for c in units(text))
+    return sum(cursor_advance(c, size) for c in units(text))
 
 
 def wrap_tip(text,separator,columns,width,size,*,reflow=False,hyphenate=True,max_rows=3):

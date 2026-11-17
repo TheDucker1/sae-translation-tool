@@ -25,6 +25,11 @@ def unicode_text(value):
 def color(value): return [value>>16&255,value>>8&255,value&255,value>>24&255]
 
 
+def cursor_advance(character, size):
+    code = ord(character)
+    return size // 2 if 0x20 <= code <= 0x7E or 0xFF61 <= code <= 0xFFA0 else size
+
+
 class TextFormat:
     def __init__(self, data):
         r = Reader(data); r.take(3)

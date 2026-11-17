@@ -11,6 +11,8 @@ from .packing import payload,member,pack_members,repack
 from .seekwriter import relocate
 from .imageassets import stamp
 from .imagecodec import ImageError, ImageCancelled
+from .engine import TEXT_OPS
+from .textlayout import script_font_text
 from .textureexport import prepare_textures, patch_tree, changed_paths
 from .uitext import prepare as prepare_ui_text
 
@@ -109,18 +111,24 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     reserved = set(pairing['restore']) if pairing else set()
     used_aliases = set()
     choice_atlas = None
-    authored_choices = pairing and any(c.opcode == 0x3F6 and c.authored for s in project.scripts.values() for c in s.commands)
-    if authored_choices:
-        from .choiceart import END_CARRIER, FIRST_CARRIER, ChoiceAtlas, approach_metrics
-        from .engine import text_fields
+    approach_keys = set()
+    font_face = None
+    authored_ops = {c.opcode for s in project.scripts.values() for c in s.commands if c.authored} if project.font_asset else set()
+    authored_choices = pairing and bool({0x65, 0x3F6} & authored_ops)
+    if (TEXT_OPS & authored_ops) or (project.font_asset and project.ui_text_assets):
         from .fontpatch import effective_font
         from .text import TextPresentation
-        from .uitext import get_catalog
 
-        settings_sources = ('DFHSR4.TTC', 'env/env_approach.dat', 'env/env_script_select.dat', 'env/env_game_utility.dat',
+        settings_sources = ('DFHSR4.TTC', 'env/env_game_utility.dat',
                             'env/env_string_format.dat', 'env/env_config.dat', 'env/env_global.dat', 'env/env_message_window.dat')
         source_stamps.update({name: stamp(root/name) for name in settings_sources})
         font_face = effective_font(project, TextPresentation(root))
+    if authored_choices:
+        from .choiceart import END_CARRIER, FIRST_CARRIER, ChoiceAtlas, approach_metrics
+        from .engine import text_fields
+        from .uitext import get_catalog
+
+        source_stamps.update({name: stamp(root/name) for name in ('env/env_approach.dat', 'env/env_script_select.dat')})
         metrics = approach_metrics(root, font_face.utility)
         unavailable = {char for s in project.scripts.values() for c in s.commands
                        for _, text in text_fields(dict(opcode=c.opcode, args=c.args)) for char in text
@@ -134,11 +142,17 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     def wire_text(opcode, args, field, value, authored):
         if not reserved.isdisjoint(value):
             raise ExportError(f'Script field {field} contains a character reserved for font aliases')
-        wire = shape_script(value, opcode, args, field, project.text_format, pairing)
+        if font_face is not None:
+            wire = script_font_text(font_face, value, opcode, args, field, authored=authored)
+        else:
+            wire = shape_script(value, opcode, args, field, project.text_format, pairing)
         used_aliases.update(reserved.intersection(wire))
-        if choice_atlas is not None and authored and opcode == 0x3F6:
-            size, _ = metrics['child' if '.children[' in field else 'parent']
-            wire, _ = choice_atlas.encode(value, size)
+        if choice_atlas is not None and authored and opcode in {0x65, 0x3F6}:
+            size, _ = metrics['child' if opcode == 0x65 or '.children[' in field else 'parent']
+            key = (wire, size)
+            wire, width = choice_atlas.encode(*key)
+            if opcode == 0x3F6 and width is not None:
+                approach_keys.add(key)
         return wire
 
     locations=project.locations();changed={};objects={}
@@ -148,7 +162,7 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
         original=obj.read(0,gzip=True)
         if original!=bytes.fromhex(s.original):raise ExportError(f'Source script {sid} changed since project import')
         if sid in project.touched or pairing:
-            compiled=project.compile(sid,locations,wire_text=wire_text if pairing else None)
+            compiled=project.compile(sid,locations,wire_text=wire_text if pairing or font_face is not None else None)
             if compiled!=original:changed[sid]=compiled;objects[sid]=(numbered,obj)
     report=dict(format='saekano-game-export',version=1,revision=project.revision,changed_scripts=[],
                 source_hashes={name:hashlib.sha256(data).hexdigest() for name,data in [('first.dat',first_bytes),('resource.dat',resource_bytes)]},
@@ -163,7 +177,7 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     report['textures']=texture_rows
     report['changed_textures']=sum(row['changed'] for row in texture_rows)
     try:ui_changes,ui_rows,ui_catalog=prepare_ui_text(getattr(project,'ui_text_assets',{}),root,
-                                                     pairing=pairing,used_aliases=used_aliases)
+                                                     pairing=pairing,used_aliases=used_aliases,font=font_face)
     except ValueError as error:raise ExportError('UI text export validation failed: '+str(error)) from error
     if pairing:
         from .fontpatch import pack, sections
@@ -171,8 +185,11 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
         remove_unused_font_records(parts, pairing, used_aliases)
         if choice_atlas and choice_atlas.glyphs:
             choice_atlas.append_to(parts)
-            report['font_asset']['approach_labels'] = dict(unique_labels=len(choice_atlas.labels),
+            report['font_asset']['packed_choice_labels'] = dict(unique_labels=len(choice_atlas.labels),
                                                          generated_glyphs=len(choice_atlas.glyphs))
+            if approach_keys:
+                approach_glyphs = {char for key in approach_keys for char in choice_atlas.labels[key][0]}
+                report['font_asset']['approach_labels'] = dict(unique_labels=len(approach_keys), generated_glyphs=len(approach_glyphs))
         font = pack(parts)
         report['font_asset']['pair_spacing'] = dict(pairing['summary'], exported_aliases=len(used_aliases))
     report['ui_text']=ui_rows;report['changed_ui_text']=sum(row['changed'] for row in ui_rows)

@@ -246,7 +246,9 @@ def backlog_layout(library, state, font):
             add(0xbe5c, 1, 35, offset=(0, y))
             root_y = y + e.sprite[0xbe5c]['y'] + e.sprite[0xbe5c]['h']
             x = e.point[0xbef4][0] + e.point[0xbf04][0]
-            parsed = font.format.ordinary(entries[row], geometry_only=True)
+            from .textlayout import script_font_text
+            wire = script_font_text(font, entries[row], 0x64, {}, 'text', authored=True)
+            parsed = font.format.ordinary(wire, geometry_only=True)
             scale = e.floating(0xc180); size = int(font.utility * scale)
             rgb = e.text_colors[3 if state.get('read_color', False) and len(e.text_colors) > 3 else 0]
             if parsed['name']:

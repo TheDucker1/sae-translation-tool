@@ -172,8 +172,15 @@ def metadata_issues(records,c):
     return issues
 
 
-def effective_node(c,node_id,records,data=None,*,pairing=None,used_aliases=None):
-    n=c.nodes[node_id];edits={f['index']:records[key]['text'] for key,f in c.fields.items() if f['node_id']==node_id and key in records}
+def effective_node(c,node_id,records,data=None,*,pairing=None,used_aliases=None,font=None):
+    from .fontstyle import match_style
+    n=c.nodes[node_id];edits={}
+    for key,f in c.fields.items():
+        if f['node_id']==node_id and key in records:
+            text=records[key]['text']
+            if getattr(font,'asset_sha256',None):
+                text=match_style(text,font,f['renderer'])['text']
+            edits[f['index']]=text
     from .uifit import preserved_tip_edits,validate_tips
     preserved_tip_edits(c,n,records,edits)
     if not edits:return n['data'] if data is None else data
@@ -204,7 +211,7 @@ def effective_node(c,node_id,records,data=None,*,pairing=None,used_aliases=None)
     return result
 
 
-def prepare(records,root,catalog=None,*,check_metadata=True,pairing=None,used_aliases=None):
+def prepare(records,root,catalog=None,*,check_metadata=True,pairing=None,used_aliases=None,font=None):
     if not records and not (pairing and used_aliases is not None):return {},[],None
     c=catalog or build_catalog(root);validate_records(records,c,pairing=pairing);changes={};rows=[]
     if pairing and used_aliases is not None:
@@ -222,7 +229,7 @@ def prepare(records,root,catalog=None,*,check_metadata=True,pairing=None,used_al
     if context and context['columns']!=context['original']:
         nodes.update(n['id'] for n in c.nodes.values() if n['table'] and n['table'][2]=='profile_items')
     for node_id in sorted(nodes):
-        n=c.nodes[node_id];result=effective_node(c,node_id,records,pairing=pairing,used_aliases=used_aliases)
+        n=c.nodes[node_id];result=effective_node(c,node_id,records,pairing=pairing,used_aliases=used_aliases,font=font)
         if result!=n['data']:changes.setdefault(n['source'],[]).append((n['chain'],result))
     for key,record in records.items():
         f=c.fields[key];rows.append(dict(field_id=key,source=f['source'],route=f['route'],changed=record['text']!=f['original']))

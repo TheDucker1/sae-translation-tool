@@ -38,6 +38,7 @@ class ModeCompositionTests(unittest.TestCase):
         self.assertEqual(description_lines('ab/cd', '/', 3), ['ab', 'cd'])
         with self.assertRaises(ValueError): description_lines('a/b/c/d', '/', 3)
         self.assertEqual(approach_topics(' Topic | First | Second '), [['Topic', 'First', 'Second']])
+        self.assertEqual(approach_topics(r'Topic \| Title | Choice \\ Path'), [['Topic | Title', r'Choice \ Path']])
         with self.assertRaises(ValueError): approach_topics('Topic only')
         with self.assertRaises(ValueError): approach_topics('Topic | 1 | 2 | 3 | 4')
 

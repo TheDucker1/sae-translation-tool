@@ -7,7 +7,7 @@ import struct
 from .imageassets import stamp
 from .imagecodec import ImageError
 from .scriptcodec import Reader
-from .text import color, units
+from .text import color, cursor_advance, units
 
 
 FAMILIES = (
@@ -91,7 +91,7 @@ def text_layer(name, text, position, size, rgba, font, *, center=False):
     if not 0 <= size <= 1024: raise ImageError('Composition text size outside supported range')
     # Native simple DrawString advances by nominal PVF cells even for cached glyphs.
     chars = units(text).split('\0', 1)[0]
-    widths = [size // 2 if 0x20 <= ord(c) <= 0x7e or 0xff61 <= ord(c) <= 0xffa0 else size for c in chars]
+    widths = [cursor_advance(c, size) for c in chars]
     x, y = position
     if center: x -= sum(widths) // 2
     glyphs, cursor = [], x
@@ -109,16 +109,16 @@ def text_layer(name, text, position, size, rgba, font, *, center=False):
 
 class EnvironmentLibrary:
     """Small immutable environment snapshots; changes require an explicit refresh."""
-    def __init__(self, root, *, catalog=None, ui_text_assets=None, ui_text_catalog=None, pairing=None):
+    def __init__(self, root, *, catalog=None, ui_text_assets=None, ui_text_catalog=None, pairing=None, font=None):
         self.root = root; self.files = {}; self.decoded = {}; self.catalog = catalog
         self.members = {}; self.member_sources = {}
-        self.ui_text_assets=dict(ui_text_assets or {});self.ui_text_catalog=ui_text_catalog;self.pairing=pairing
+        self.ui_text_assets=dict(ui_text_assets or {});self.ui_text_catalog=ui_text_catalog;self.pairing=pairing;self.font=font
 
     def effective(self,source,route,data):
         if not self.ui_text_assets:return data
         from .uitext import effective_node
         identity=source+':'+('/'.join(map(str,route)))
-        if identity in self.ui_text_catalog.nodes:return effective_node(self.ui_text_catalog,identity,self.ui_text_assets,data,pairing=self.pairing)
+        if identity in self.ui_text_catalog.nodes:return effective_node(self.ui_text_catalog,identity,self.ui_text_assets,data,pairing=self.pairing,font=self.font)
         return data
 
     def member(self, source, route):
@@ -318,9 +318,11 @@ def message_layout(e, state, font):
         for i, shape in enumerate(e['cursors']):
             out.layers.append(blit(f'Advance cursor {i}', 1, 2, shape, offset=(0, slide), alpha=alpha))
     if font is not None and state.get('text'):
-        from .pairspacing import readable, shape_script
+        from .pairspacing import readable
+        from .textlayout import native_newlines, script_font_text
         pairing=getattr(font,'pair_spacing',None)
-        wire = shape_script(state['text'], 0x64, {}, '', font.format, pairing)
+        sample = native_newlines(state['text'], font.format)
+        wire = script_font_text(font, sample, 0x64, {}, 'text', authored=True)
         parsed = font.format.ordinary(wire, geometry_only=True)
         size = int(font.utility * font.scale)
         glyphs = font.layout(parsed['body'], e['width'], font.scale, ruby=parsed['ruby'])

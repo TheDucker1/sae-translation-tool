@@ -4,9 +4,10 @@ Authored text placement/scale and branch rules come from the accepted source.
 The editor presents text immediately, holds it for review, and records normal
 selection/advance inputs. This is deliberately separate from game presentation.
 """
-from .text import units,unicode_text
+from .text import cursor_advance,units,unicode_text
 from .semantics import numeric
-from .pairspacing import readable, shape_script
+from .pairspacing import readable
+from .textlayout import script_font_text
 
 TEXT_OPS={0x64,0x65,0x3ec,0x3f2,0x3f6,0x3f8,0x3f9}
 
@@ -14,42 +15,45 @@ TEXT_OPS={0x64,0x65,0x3ec,0x3f2,0x3f6,0x3f8,0x3f9}
 def glyph_width(g,scale):return g.get('pixel_advance',int(g['advance']*scale))
 
 
-def block(font,value,origin,scale,*,width=None,center=False,baseline=False,rgb=None,tags=False,role='text',single_line=False,approach_label=False):
+def block(font,value,origin,scale,*,width=None,center=False,baseline=False,rgb=None,tags=False,role='text',single_line=False,packed_choice=False):
     text,colors=(units(value).split('\0',1)[0],[]) if single_line else font.format.prepare(value,font_tags=tags)
     size=int(font.utility*scale)
     if not 0<size<=1024:raise ValueError('Text size outside preview budget')
     ink_width = None
-    if approach_label:
+    if packed_choice:
         from .choiceart import preview_label
         text, ink_width = preview_label(font, text, size)
     if single_line:
         glyphs=[];x=0
         for i,c in enumerate(text):
-            advance = size if ink_width is not None else font.measure(c,size)
+            advance = cursor_advance(c, size)
             glyphs.append(dict(code=ord(c),x=x,y=0,index=i,line=0,advance=advance/scale,pixel_advance=advance));x+=advance
     else:glyphs=font.layout(text,width=width or 2**20,scale=scale)
-    extent=max((g['x']+glyph_width(g,scale) for g in glyphs),default=0)
     x,y=origin
-    if center:x-=(extent if ink_width is None else font.measure(text,size))//2
+    if center:
+        extent = font.measure(text, size) if single_line else max((g['x']+glyph_width(g,scale) for g in glyphs),default=0)
+        x -= extent // 2
     if baseline:y-=size
     logical = readable(text, getattr(font, 'pair_spacing', None)) if ink_width is None else units(value)
     return dict(text=unicode_text(logical),units=logical,glyphs=glyphs,origin=[x,y],size=size,
                 colors=colors,color=(rgb or [0,0,0,255])[:],role=role,ink_width=ink_width)
 
 
-def prepare(session,op,args):
+def prepare(session,op,args,*,authored=False):
     """Prepare a whole text surface once. Selection mutation lives in runtime."""
     s=session;f=s.text;e=s.settings
     surface=dict(opcode=op,blocks=[],panels=[],options=[],kind='',note='',parent=None,epoch=s.now)
     if op==0x3ec:
         env=e['chapter_text'];surface['kind']='Chapter title'
         for index,value in enumerate(args['texts']):
+            value=script_font_text(f,value,op,args,f'texts[{index}]',authored=authored)
             point=env['positions'][index];size=int(f.utility*env['scale'])
             surface['blocks'].append(block(f,value,[point[0],point[1]-size//2],env['scale'],role=f'title{index}',single_line=True))
     elif op==0x3f9:
         env=e['battle'];surface['kind']='Battle introduction'
         size=int(f.utility*env['text_scale']);name_size=int(f.utility*env['name_scale'])
         for side,value in enumerate(args['texts']):
+            value=script_font_text(f,value,op,args,f'texts[{side}]',authored=authored)
             base=env['text_positions'][side];panel_size=int(36*env['text_scale'])
             panel_width=env['padding']+f.measure(units(value),0 if side else panel_size)
             center=base[0]+(-panel_width//2 if side else panel_width//2)
@@ -65,7 +69,8 @@ def prepare(session,op,args):
         env=e['approach'];outcome=0 if s.approach>=args['required_gauge'] else 1
         surface.update(kind='Approach result',outcome=outcome,epoch=s.now,forced=False,
                        note='Success' if outcome==0 else 'Failure')
-        surface['blocks'].append(block(f,args['outcomes'][outcome]['text'],env['result_origin'],
+        text=script_font_text(f,args['outcomes'][outcome]['text'],op,args,f'outcomes[{outcome}].text',authored=authored)
+        surface['blocks'].append(block(f,text,env['result_origin'],
                                        env['result_scale'],width=env['result_width'],tags=True,role='result'))
     elif op in {0x65,0x3f2}:surface['kind']='Battle choices' if op==0x3f2 else 'Choices'
     elif op==0x3f6:
@@ -77,7 +82,7 @@ def prepare(session,op,args):
     return surface
 
 
-def choice_rows(session,surface,args):
+def choice_rows(session,surface,args,*,authored=False):
     """Rebuild the small visible menu after input/state changes, retaining IDs."""
     s=session;f=s.text;op=surface['opcode'];shared=s.settings['selection']
     blocks=[];options=[]
@@ -95,14 +100,15 @@ def choice_rows(session,surface,args):
         for i,row in enumerate(entries):
             point=points[i];origin=[point[0]+shared['words'][4],point[1]+shared['words'][5]]
             history=s.choice_history.get((s.sid,s.pc),set())
-            item=block(f,row['label'],origin,shared['scale'],center=True,rgb=shared['colors'][int((i,) in history)],role=f'choice{i}',single_line=True)
+            value=script_font_text(f,row['label'],op,args,f'choices[{i}].label',authored=authored)
+            item=block(f,value,origin,shared['scale'],center=True,rgb=shared['colors'][int((i,) in history)],role=f'choice{i}',single_line=True,packed_choice=authored)
             option(row['label'],dict(choice=i),item,ordinal=i)
     elif op==0x3f2:
         env=s.settings['battle'];rows=args['choices']
         if not 1<=len(rows)<=4:raise ValueError('Battle choices require 1–4 authored rows')
         for i,row in enumerate(rows[1:],1):
             control=i-1;point=env['choice_positions'][control]
-            text = shape_script(row['label'], op, args, f'choices[{i}].label', f.format, getattr(f, 'pair_spacing', None))
+            text = script_font_text(f, row['label'], op, args, f'choices[{i}].label', authored=authored)
             item=block(f,text,[0,0],f.scale,width=env['width'],tags=True,role=f'choice{i}')
             lines=max((g['line'] for g in item['glyphs']),default=0)+1
             offset=env['choice_offsets'][1 if lines==1 else 0]
@@ -128,7 +134,8 @@ def choice_rows(session,surface,args):
                 if display>=len(table):raise ValueError('Approach parents exceed authored point table')
                 point=table[display]
             row=args['parents'][original];origin=[point[0]+env['text_offset'][0],point[1]+env['text_offset'][1]]
-            item=block(f,row['label'],origin,env['scale'],center=True,baseline=True,role=f'parent{original}',single_line=True,approach_label=True)
+            value=script_font_text(f,row['label'],op,args,f'parents[{original}].label',authored=authored)
+            item=block(f,value,origin,env['scale'],center=True,baseline=True,role=f'parent{original}',single_line=True,packed_choice=authored)
             if selected is not None:item['color'][3]=128
             option(row['label'],dict(parent=original),item,ordinal=original,selected=selected==original)
         if selected is not None:
@@ -137,7 +144,8 @@ def choice_rows(session,surface,args):
                 if child>=len(points):raise ValueError('Approach children exceed authored point table')
                 point=points[child];used=bool(s.approach_flags[selected*3+child])
                 origin=[point[0]+shared['words'][4],point[1]+shared['words'][5]]
-                item=block(f,row['label'],origin,shared['scale'],center=True,role=f'child{selected}/{child}',single_line=True,approach_label=True)
+                value=script_font_text(f,row['label'],op,args,f'parents[{selected}].children[{child}].label',authored=authored)
+                item=block(f,value,origin,shared['scale'],center=True,role=f'child{selected}/{child}',single_line=True,packed_choice=authored)
                 option(row['label'],dict(choice=selected,child=child),item,not used,'Already used' if used else '',
                        parent=selected,ordinal=child)
             options.append(dict(label='Back to parents',action=dict(back=True),enabled=True,reason='',rect=None))

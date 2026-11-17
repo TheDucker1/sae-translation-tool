@@ -88,6 +88,25 @@ class AutoFitLayouts(unittest.TestCase):
         self.assertEqual(self.font.format.ordinary(text)['markers'][0][1:],parsed['markers'][0][1:])
         self.assertEqual(service.wrap(0x64,packet['text'],width=180)['text'],packet['text'])
 
+    def test_reflow_recalculates_legacy_timed_padding(self):
+        text='A「One          《SP QUE,1,2700》two.」'
+        service=TextLayoutService(self.font,self.settings)
+        self.assertEqual(service.wrap(0x64,text)['text'],text)
+        proposal=service.wrap(0x64,text,reflow=True)
+        self.assertEqual(proposal['text'],'A「One 《SP QUE,1,2700》two.」')
+        before=self.font.format.ordinary(text)['markers']
+        after=self.font.format.ordinary(proposal['text'])['markers']
+        self.assertEqual([m[1:] for m in before],[m[1:] for m in after])
+
+    def test_inserted_hyphen_uses_the_measured_export_glyph(self):
+        from editor.textlayout import script_font_text
+        self.font.asset_sha256='fixture'
+        service=TextLayoutService(self.font,self.settings)
+        proposal=service.wrap(0x64,'Longword',width=110,hyphenate=True)
+        self.assertIn('－'+self.font.format.break_char,proposal['text'])
+        wire=script_font_text(self.font,proposal['text'],0x64,{},'text',authored=True)
+        self.assertEqual(wire,proposal['text'])
+
     def test_padded_timed_message_exports_and_undoes(self):
         from test_game_export import source_fixture
         with tempfile.TemporaryDirectory(dir=ROOT/'.local') as folder:

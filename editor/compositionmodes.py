@@ -1,11 +1,13 @@
 """Read-only profile/approach UI snapshots; no mode controllers or personal state."""
 from copy import deepcopy
+import re
 from .archive import Archive
 from .composition import Composition, Layer, blit, sprite, text_layer
-from .compositioncommon import cached, plain_layer, selection_environment, dialog_layout
+from .compositioncommon import cached, choice_label_layer, plain_layer, selection_environment, dialog_layout
 from .imagecodec import ImageError
 from .scriptcodec import Reader
 from .text import color, units
+from .textlayout import script_font_text
 from . import profileflow
 
 
@@ -243,7 +245,14 @@ def profile_separator(library):
 
 
 def approach_topics(value):
-    result = [[field.strip() for field in line.split('|')] for line in value.splitlines() if line.strip()]
+    result = []
+    for line in value.splitlines():
+        if not line.strip():continue
+        fields = ['']
+        for token in re.split(r'(\\[\\|]|\|)', line):
+            if token == '|':fields.append('')
+            else:fields[-1] += token[1:] if token in ('\\|', '\\\\') else token
+        result.append([field.strip() for field in fields])
     if not result: result = [['Topic ' + str(i + 1), 'Choice 1', 'Choice 2'] for i in range(3)]
     if len(result) > 6 or any(not 2 <= len(row) <= 4 for row in result):
         raise ImageError('Use up to six lines: Topic | Choice1 | Choice2 | Choice3 (one to three choices)')
@@ -261,7 +270,10 @@ def approach_layout(library, state, font):
                                    ('Mission right', 32, e['sprites'][2]), ('Mission character', 26 + cid, e['labels'][cid])): add(name, entry, shape, alpha=255)
     elif view == 4: approach_choices(out, library, e, state, font)
     elif view == 5:
-        text = state.get('result_text', '').strip() or 'Approach result preview'
+        text = state.get('result_text', '')
+        if not text.strip():
+            text = 'Approach result preview'
+        text = script_font_text(font, text, 0x3F8, {}, '', authored=True)
         mode_result(out, library, e, dict(state, character_id=cid, category=2 if state.get('success', True) else 0), font, text)
     return out
 
@@ -274,15 +286,9 @@ def approach_choices(out, library, e, state, font):
         raise ImageError('Approach topic/child selection outside preview entries')
     visited, used = state.get('visited', False), state.get('used', False)
     def label(name, value, point, size, rgba, baseline=False):
-        from .choiceart import preview_label
-        wire, ink_width = preview_label(font, value, size)
-        x, y = point; x -= font.measure(units(wire), size) // 2
-        layer = text_layer(name, wire, [x, y - size if baseline else y], size, rgba, font)
-        if ink_width is not None:
-            layer.text = value
-            layer.destination[0] = point[0] - ink_width // 2
-            layer.destination[2] = ink_width
-        out.layers.append(layer)
+        value = script_font_text(font, value, 0x3F6, {}, '', authored=True)
+        x, y = point
+        out.layers.append(choice_label_layer(name, value, x, y - size if baseline else y, size, rgba, font))
     def put(name, entry, shape, point, **kw):
         shape = deepcopy(shape); shape['x'], shape['y'] = point
         return visual_sprite(out, name, f'resource.dat:1/{entry}', shape, **kw)

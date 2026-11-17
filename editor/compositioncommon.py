@@ -6,6 +6,7 @@ from .imagecodec import ImageError
 from .scriptcodec import Reader
 from .text import color, units, unicode_text
 from .pairspacing import readable
+from .textlayout import script_font_text
 from . import environments
 
 
@@ -57,6 +58,18 @@ def selection_environment(data):
                 scale=scale, text_colors=text_colors)
 
 
+def choice_label_layer(name, value, center, y, size, rgba, font):
+    from .choiceart import preview_label
+    wire, ink_width = preview_label(font, value, size)
+    advance = font.measure(units(wire), size) if font else len(wire) * size // 2
+    layer = text_layer(name, wire, [center - advance // 2, y], size, rgba, font)
+    if ink_width is not None:
+        layer.text = value
+        layer.destination[0] = center - ink_width // 2
+        layer.destination[2] = ink_width
+    return layer
+
+
 def choices_layout(library, state, font):
     e = cached(library, 'selection', 'env/env_script_select.dat', selection_environment)
     entries = state.get('text', '').splitlines()
@@ -76,8 +89,8 @@ def choices_layout(library, state, font):
             marker = deepcopy(e['sprites'][2]); marker['alignment'] = 0
             out.layers.append(blit('Selected choice marker', 1, 20, marker, offset=(x, y), alpha=alpha))
         rgb = e['text_colors'][int(state.get('visited', False))][:3] + [alpha]
-        center_x = x + e['words'][4]; text_x = center_x - (font.measure(units(value), size) // 2 if font else len(value) * size // 4)
-        out.layers.append(text_layer(f'Choice label {i}', value, [text_x, y + e['words'][5]], size, rgb, font))
+        value = script_font_text(font, value, 0x65, {}, f'choices[{i}].label', authored=True)
+        out.layers.append(choice_label_layer(f'Choice label {i}', value, x + e['words'][4], y + e['words'][5], size, rgb, font))
     return out
 
 
@@ -115,6 +128,7 @@ def calendar_layout(library, state, font):
         size = int((font.utility if font else 27) * e['chapter']['scale'])
         texts = state.get('text', '').splitlines()[:2]
         for i, value in enumerate(texts):
+            value = script_font_text(font, value, 0x3EC, {}, f'texts[{i}]', authored=True)
             x, y = e['chapter']['positions'][i]
             out.layers.append(text_layer(f'Chapter caption {i}', value, [x, y - size // 2], size, [0, 0, 0, 255], font))
     return out
@@ -144,7 +158,11 @@ def dialog_layout(library, state, font):
     labels = e['groups'][group] if group >= 0 else []
     if len(labels) > 3: raise ImageError('Dialog supports at most three buttons')
     alpha = state.get('progress', 100) * 255 // 100
-    prompt, height = plain_layer('Dialog prompt', state.get('text', ''), [0, 0], settings[6], e['scales'][1], e['colors'][0][:3] + [alpha], font)
+    value = state.get('text', '')
+    if getattr(font, 'asset_sha256', None):
+        from .fontstyle import LAYOUT, match_style
+        value = match_style(value, font, LAYOUT)['text']
+    prompt, height = plain_layer('Dialog prompt', value, [0, 0], settings[6], e['scales'][1], e['colors'][0][:3] + [alpha], font)
     button_size = int(font.utility * e['scales'][0])
     content_height = height + settings[0] * 2 + (button_size + settings[5] if labels else 0)
     body = (content_height + p[0][5] - 1) // p[0][5] * p[0][5]

@@ -1,10 +1,11 @@
 """Translation formatting that writes native breaks, using shared game metrics."""
 from copy import deepcopy
+from pathlib import Path
 import re
 import unicodedata
-from .engine import text_fields
+from .engine import TEXT_OPS, text_fields
 from .scriptcodec import put
-from .text import units,unicode_text
+from .text import cursor_advance,units,unicode_text
 from .pairspacing import shape_script
 
 
@@ -31,7 +32,7 @@ def editable_newlines(value,formatter):
     return value.replace(formatter.break_char,'\n') if formatter else value
 
 
-def reflow_breaks(value,formatter):
+def reflow_breaks(value,formatter,*,collapse_padding=False):
     """Explicit repair option for old wrapping; keep tags and ruby readings."""
     opening,closing=formatter.tokens[0][0],formatter.tokens[1][0]
     parts=re.split('('+re.escape(opening)+'.*?'+re.escape(closing)+')',value,flags=re.DOTALL)
@@ -41,7 +42,9 @@ def reflow_breaks(value,formatter):
             tag=units(part[1:-1]).upper()
             if tag==formatter.following[9]:reading=True
             elif units(part).upper()==formatter.following[10]:reading=False
-        elif not reading:parts[i]=part.replace(formatter.break_char,' ').replace('\r\n',' ').replace('\r',' ').replace('\n',' ')
+        elif not reading:
+            part=part.replace(formatter.break_char,' ').replace('\r\n',' ').replace('\r',' ').replace('\n',' ')
+            parts[i]=re.sub(r' {2,}', ' ', part) if collapse_padding else part
     return ''.join(parts)
 
 
@@ -103,9 +106,28 @@ def full_width_text(value,font,*,controls=True,preserve_speaker=False,preserve_f
     return dict(text=''.join(result),converted_characters=converted,preserved_ascii=''.join(sorted(preserved)))
 
 
+def measured_script_field(opcode, field):
+    return supports_breaks(opcode) and (opcode != 0x3F2 or field != 'choices[0].label')
+
+
+def script_font_text(font, value, opcode, args, field, *, authored):
+    """Select display glyphs with the same rules in preview and archive output."""
+    if font is None:
+        return value
+    if authored and getattr(font, 'asset_sha256', None):
+        if measured_script_field(opcode, field):
+            value = full_width_text(value, font, preserve_speaker=opcode == 0x64)['text']
+        elif opcode in TEXT_OPS and not supports_breaks(opcode):
+            from .fontstyle import FIXED, match_style
+            value = match_style(value, font, FIXED)['text']
+    return shape_script(value, opcode, args, field, font.format, getattr(font, 'pair_spacing', None))
+
+
 class TextLayoutService:
+    normalize_script_font = True
+
     def __init__(self,font,settings,*,project=None,script_id=None,command=None,regions=None):
-        self.font=font;self.settings=settings;self.command=command
+        self.font=font;self.settings=settings;self.command=command;self.project=project
         self.proportional=bool(getattr(project,'font_asset',None) or getattr(font,'asset_sha256',None))
         # Battle ownership is established while loading the file, before Start.
         self.mode='battle' if project is not None and any(c.opcode==0x3ef for c in project.scripts[script_id].commands) else 'ordinary'
@@ -121,7 +143,7 @@ class TextLayoutService:
     def label_width(self,value,scale):
         size=int(self.font.utility*scale)
         # DrawString advances independently of GSF proportional glyph widths.
-        return sum(size//2 if 0x20<=ord(c)<=0x7e or 0xff61<=ord(c)<=0xffa0 else size for c in units(value))
+        return sum(cursor_advance(c, size) for c in units(value))
 
     def convert_dialogue_width(self,value,*,width=None,dialogue_mode='auto',preserve_speaker=False,convert=True):
         """One-for-one visible conversion without changing queue indices or breaks."""
@@ -178,14 +200,14 @@ class TextLayoutService:
         if scale is None:raise ValueError('This opcode has no editable text layout')
         width_source='authored_box'
         packed_width = None
-        if opcode == 0x3F6 and getattr(f, 'pair_spacing', None):
+        if opcode in {0x65, 0x3F6} and getattr(f, 'pair_spacing', None):
             from .choiceart import approach_metrics, make_label
             packed = make_label(f, value, int(f.utility * scale))
             if packed:
                 metrics = getattr(f, 'approach_card_metrics', None)
                 if metrics is None:
                     metrics = f.approach_card_metrics = approach_metrics(f.root, f.utility)
-                _, default = metrics['child' if '.children[' in field else 'parent']
+                _, default = metrics['child' if opcode == 0x65 or '.children[' in field else 'parent']
                 packed_width = packed.width
                 authored = True
                 width_source = 'choice_card'
@@ -294,29 +316,46 @@ class TextLayoutService:
         return self.font.format.prepare(wire, font_tags=opcode in {0x3F2, 0x3F8})[0]
 
     def wrap(self,opcode,value,*,field='',width=None,dialogue_mode='auto',hyphenate=False,full_width_latin=False,preserve_speaker=False,reflow=False):
-        checked=reflow_breaks(value,self.font.format) if reflow and supports_breaks(opcode) else value
-        timed=opcode==0x64 and bool(self.font.format.ordinary(native_newlines(checked,self.font.format))['markers'])
+        f=self.font.format
+        timed=opcode==0x64 and bool(f.ordinary(native_newlines(value,f),geometry_only=reflow)['markers'])
+        checked=reflow_breaks(value,f,collapse_padding=timed) if reflow and supports_breaks(opcode) else value
         try:
-            return self._wrap(opcode,value,field=field,width=width,dialogue_mode=dialogue_mode,hyphenate=hyphenate,
-                              full_width_latin=full_width_latin,preserve_speaker=preserve_speaker,reflow=reflow)
+            options=dict(field=field,width=width,dialogue_mode=dialogue_mode,hyphenate=hyphenate,
+                         full_width_latin=full_width_latin,preserve_speaker=preserve_speaker)
+            if opcode==0x3F8 and self.project and (Path(self.project.root)/'env/env_approach.dat').is_file():
+                from .composition import message_environment
+                from .compositionmodes import approach_environment
+                from .uipanel import panel_regions, result_contract
+                from .uitext import get_catalog
+                catalog=get_catalog(self.project)
+                result=approach_environment(catalog.source('env/env_approach.dat'))
+                cursors=message_environment(catalog.source('env/env_message_window.dat'))['cursors']
+                contract=result_contract(result,cursors)
+                panel=panel_regions(self.project,catalog,self.font,contract)[-1]
+                return self._wrap(opcode,checked,original=value,panel=panel,**options)
+            return self._wrap(opcode,checked,original=value,**options)
         except ValueError as error:
             if not timed:raise
             result=self.convert_dialogue_width(value,width=width,dialogue_mode=dialogue_mode,preserve_speaker=preserve_speaker,convert=full_width_latin)
             result['fit_warning']=str(error)
             return result
 
-    def _wrap(self,opcode,value,*,field,width,dialogue_mode,hyphenate,full_width_latin,preserve_speaker,reflow):
-        original=value;conversion=None;style=None
-        if reflow and supports_breaks(opcode):value=reflow_breaks(value,self.font.format)
+    def _wrap(self,opcode,value,*,original,field,width,dialogue_mode,hyphenate,full_width_latin,preserve_speaker,panel=None):
+        conversion=None;style=None
         timed=opcode==0x64 and bool(self.font.format.ordinary(value)['markers'])
         if self.proportional and not supports_breaks(opcode):
             from .fontstyle import match_style,FIXED
             style=match_style(value,self.font,FIXED);value=style['text']
             if full_width_latin:conversion=dict(converted_characters=0,preserved_ascii='')
-        elif full_width_latin:
-            conversion=full_width_text(value,self.font,controls=opcode in {0x64,0x3f2,0x3f8},preserve_speaker=preserve_speaker and opcode==0x64)
+        elif full_width_latin or (self.normalize_script_font and self.proportional and measured_script_field(opcode, field)):
+            conversion=full_width_text(value,self.font,controls=opcode in {0x64,0x3f2,0x3f8},
+                                       preserve_speaker=opcode==0x64 and (preserve_speaker or self.proportional))
             value=conversion['text'];conversion={k:v for k,v in conversion.items() if k!='text'}
         spec=self.dimensions(opcode,field=field,value=value,width=width,dialogue_mode=dialogue_mode);f=self.font.format
+        if panel:
+            row_widths=[min(spec['width'], n) for n in panel['row_widths']]
+            spec.update(width=row_widths[0],width_source='panel_alpha',
+                        panel_capacity=panel['panel_capacity'],row_widths=row_widths)
         if not supports_breaks(opcode):
             source=native_field(opcode,value,f)
             if '\0' in source:raise ValueError('Cannot format NUL-terminated/hidden text')
@@ -325,12 +364,18 @@ class TextLayoutService:
             if extent>spec['width']:raise ValueError(f"Single-line label/caption is {extent}px wide, exceeding {spec['width']}px; shorten it. This renderer does not support line breaks.")
             return dict(text=source,editor_text=source,changed=source!=original,full_width_conversion=conversion,inserted_breaks=0,line_count=1,
                         lines=[source],line_widths=[extent],break_character=None,breaks_supported=False,font_style=style,**spec)
-        source,body,pairs,ruby=self.projection(opcode,value,geometry_only=timed);limit=spec['width'];scale=spec['scale']
+        source,body,pairs,ruby=self.projection(opcode,value,geometry_only=timed);scale=spec['scale']
+        def line_limit(index):
+            if not panel:return spec['width']
+            if index>=spec['panel_capacity']:
+                raise ValueError(f"Approach result exceeds its {spec['panel_capacity']}-line bubble. Shorten this result.")
+            return spec['row_widths'][index]
         def advance(c):
             other=f.tokens[4][1] if c==f.tokens[4][0] else c
             return max(int(self.font.measure(c,self.font.utility)*scale),int(self.font.measure(other,self.font.utility)*scale))
-        if limit<advance(f.break_char):raise ValueError('Width is too narrow for the native line-break traversal')
+        if line_limit(0)<advance(f.break_char):raise ValueError('Width is too narrow for the native line-break traversal')
         display = self.display_body(opcode, source, body, field)
+        hyphen = full_width_text('-',self.font)['text'] if full_width_latin or self.proportional else '-'
         widths=[0 if c==f.break_char else advance(c) for c in display]
         prefix=[0]
         for n in widths:prefix.append(prefix[-1]+n)
@@ -356,6 +401,7 @@ class TextLayoutService:
             return at>=0 and body[at].isalpha()
         replacements=[];lines=[];start=0;hyphens=set()
         while start<len(body):
+            limit=line_limit(len(lines))
             hard=body.find(f.break_char,start);end=len(body) if hard<0 else hard
             if start==end:lines.append((start,end));start=end+1;continue
             while span(start,end)>limit:
@@ -373,10 +419,10 @@ class TextLayoutService:
                 if not candidates:
                     possible=[j for j in range(start+2,min(i+1,end-1))
                               if hyphenate and allowed(j) and letter_before(j) and body[j].isalpha()
-                              and span(start,j)+advance('-')<=limit]
+                              and span(start,j)+advance(hyphen)<=limit]
                     if possible:
                         cut=possible[-1];hyphens.add(cut);lines.append((start,cut))
-                        replacements.append((pairs[cut][1],pairs[cut][1],'-'+f.break_char));start=cut;continue
+                        replacements.append((pairs[cut][1],pairs[cut][1],hyphen+f.break_char));start=cut;limit=line_limit(len(lines));continue
                     word=unicode_text(body[start:min(end,start+60)])
                     raise ValueError(f'Unbreakable word/ruby span exceeds {limit}px: {word!r}. Shorten it or add a deliberate break.')
                 cut,resume=candidates[-1];lines.append((start,cut))
@@ -385,13 +431,13 @@ class TextLayoutService:
                     edits={ (pairs[k][1],pairs[k][2]) for k in range(cut,resume) }
                     for a,b in edits:replacements.append((a,b,f.break_char if a==pairs[cut][1] else ''))
                 else:replacements.append((pairs[cut][1],pairs[cut][1],f.break_char))
-                start=resume
+                start=resume;limit=line_limit(len(lines))
             lines.append((start,end));start=end+1
         if not body or body.endswith(f.break_char):lines.append((len(body),len(body)))
         result=source
         if timed and replacements:
             from .textpadding import pad_breaks
-            result=pad_breaks(self,source,replacements,lines,body,hyphens,spec)
+            result=pad_breaks(self,source,replacements,lines,body,hyphens,hyphen,spec)
         else:
             for a,b,text in sorted(replacements,reverse=True):result=result[:a]+text+result[b:]
         # Reparse controls/ranges and reject formatting unsupported by the player.
@@ -400,7 +446,7 @@ class TextLayoutService:
         self.font.format.prepare(prepared,unit_text=True)
         display_prepared = self.display_body(opcode, result, prepared, field)
         actual=self.font.layout(display_prepared,width=spec['native_width'],scale=scale,ruby=ranges)
-        expected=[line for line,(a,b) in enumerate(lines) for c in body[a:b]+('-' if b in hyphens else '') if not c.isspace()]
+        expected=[line for line,(a,b) in enumerate(lines) for c in body[a:b]+(hyphen if b in hyphens else '') if not c.isspace()]
         if [g['line'] for g in actual if not chr(g['code']).isspace()]!=expected:
             raise ValueError('Formatted text does not reproduce its planned lines with the native layout')
         if timed and spec['region']:
@@ -409,9 +455,11 @@ class TextLayoutService:
             if any(g['x']-extent/2 < -half or g['x']+int(g['advance']*scale)-extent/2 > half
                    for g in actual if not chr(g['code']).isspace()):
                 raise ValueError('Timed padding would place visible glyphs outside the safe bubble rectangle')
+        if panel and len(lines)>panel['panel_capacity']:
+            raise ValueError(f"Approach result needs {len(lines)} lines; its bubble fits {panel['panel_capacity']}. Shorten this result.")
         self.check_box(opcode,field,len(lines),spec)
         return dict(text=result,editor_text=editable_newlines(result,f),changed=result!=original,full_width_conversion=conversion,
                     inserted_breaks=0 if timed else len(lines)-1-body.count(f.break_char),line_count=len(lines),
                     break_strategy='spaces' if timed else 'native',
-                    hyphenations=len(hyphens),lines=[unicode_text(body[a:b])+('-' if b in hyphens else '') for a,b in lines],
-                    line_widths=[span(a,b)+(advance('-') if b in hyphens else 0) for a,b in lines],break_character=f.break_char,breaks_supported=True,**spec)
+                    hyphenations=len(hyphens),lines=[unicode_text(body[a:b])+(hyphen if b in hyphens else '') for a,b in lines],
+                    line_widths=[span(a,b)+(advance(hyphen) if b in hyphens else 0) for a,b in lines],break_character=f.break_char,breaks_supported=True,**spec)

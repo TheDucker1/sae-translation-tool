@@ -2,7 +2,7 @@
 import json
 from PySide6.QtCore import Qt,QTimer
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QCheckBox,
-    QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QHeaderView,QPlainTextEdit,QSplitter)
+    QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QHeaderView,QPlainTextEdit,QSplitter,QInputDialog)
 from .fontpatch import WORD_SPACE_WIDTHS
 from .textcleanup import analyze_cleanup
 
@@ -17,7 +17,7 @@ class AutoFitDialog(QDialog):
         self.hyphen=QCheckBox('Hyphenate long words');self.hyphen.setChecked(True);row.addWidget(self.hyphen)
         self.split=QCheckBox('Split overflowing dialogue');self.split.setChecked(True);row.addWidget(self.split);layout.addLayout(row)
         self.reflow=QCheckBox('Reflow existing line breaks (repair older wrapping)')
-        self.reflow.setToolTip('Treat existing dialogue breaks as spaces before fitting. Enable to repair text previously fitted to the wrong width. Leave off to preserve deliberate breaks.')
+        self.reflow.setToolTip('Recalculate existing line breaks and timed wrap padding with the selected font. Leave off to retain deliberate breaks.')
         layout.addWidget(self.reflow)
         self.full_width=QCheckBox('Full-width Latin for readability (convert, then fit)')
         self.full_width.setToolTip('Convert supported Latin before fitting. With a proportional font selected, measured text uses its aliases and fixed-cursor labels use ordinary Latin. Controls and reserved breaks are preserved.')
@@ -46,7 +46,8 @@ class AutoFitDialog(QDialog):
         self.label_width=self.spin(row,'Single-line width',4096,'Auto screen fit');layout.addLayout(row)
         actions=QHBoxLayout();analyze=QPushButton('Analyze again');analyze.clicked.connect(self.analyze);actions.addWidget(analyze)
         self.apply_button=QPushButton('Apply checked changes');self.apply_button.setEnabled(False);self.apply_button.clicked.connect(self.accept);actions.addWidget(self.apply_button)
-        preview=QPushButton('Preview selected UI…');preview.clicked.connect(self.preview_ui);actions.addWidget(preview)
+        preview=QPushButton('Preview selected…');preview.clicked.connect(self.preview_selected);actions.addWidget(preview)
+        self.preview_before=QCheckBox('Preview before changes');actions.addWidget(self.preview_before)
         cancel=QPushButton('Cancel');cancel.clicked.connect(self.reject);actions.addWidget(cancel);layout.addLayout(actions)
         self.status=QLabel();self.status.setWordWrap(True);layout.addWidget(self.status)
         splitter=QSplitter(Qt.Vertical);self.table=QTableWidget(0,4);self.table.setHorizontalHeaderLabels(['Apply','File / command','Result','Details'])
@@ -99,6 +100,14 @@ class AutoFitDialog(QDialog):
                 if m:status='Context needed' if m['context_required'] else 'Fits / read-only' if m['fits'] else 'Overflow / read-only'
                 if m and m['auto_edit']:status=status.replace('read-only','conversion only')
                 self.add_row(issue['script_id'],issue['command_id'],status,issue['reason'],issue,False)
+            index=self.owner.selected()
+            if index is not None and self.plan.get('font_changed'):
+                from .engine import TEXT_OPS
+                command=self.project.scripts[self.owner.script_id].commands[index]
+                reported=self.plan['changes']+self.plan['issues']
+                if command.opcode in TEXT_OPS and all(row['command_id']!=command.uid for row in reported):
+                    row=dict(script_id=self.owner.script_id,command_id=command.uid,reason='Preview the proposed font on the existing text.')
+                    self.add_row(self.owner.script_id,command.uid,'Font preview',row['reason'],row,False)
             for change in self.plan['ui_changes']:
                 self.add_row(None,change['field_id'],'UI layout' if change['renderer']=='layout_setting' else 'UI text',change['note'],change,True)
             changed_ui={c['field_id'] for c in self.plan['ui_changes']}
@@ -132,13 +141,30 @@ class AutoFitDialog(QDialog):
     def selected_commands(self):
         return [self.table.item(i,0).data(Qt.UserRole)['command_id'] for i in range(self.table.rowCount()) if self.table.item(i,0).checkState()==Qt.Checked]
 
-    def preview_ui(self):
+    def preview_selected(self):
         row=self.table.currentRow()
-        if self.plan is None or row<0:return
+        if self.plan is None:return
         try:
-            data=self.table.item(row,0).data(Qt.UserRole);key=data.get('field_id',data.get('command_id'))
-            from .uipreview import show_ui_preview
-            show_ui_preview(self.owner,self.project,key,plan=self.plan,selected=set(self.selected_commands()),modal=True)
+            from .uipreview import show_snapshot, show_ui_preview, script_preview_frames, script_preview_snapshot
+            before=self.preview_before.isChecked();selected=set(self.selected_commands())
+            if row>=0:
+                data=self.table.item(row,0).data(Qt.UserRole);key=data['command_id']
+                if data.get('script_id') is None and self.project.locations().get(key) is None:
+                    show_ui_preview(self.owner,self.project,key,plan=None if before else self.plan,selected=selected,modal=True)
+                    return
+            else:
+                index=self.owner.selected()
+                if index is None:raise ValueError('Select a script command or a proposal row')
+                key=self.project.scripts[self.owner.script_id].commands[index].uid
+            frames=script_preview_frames(self.project,key,self.plan,before=before);frame=0
+            if len(frames)>1:
+                names=[item['label'] for item in frames]
+                name,accepted=QInputDialog.getItem(self,'Auto-fit preview','Frame',names,0,False)
+                if not accepted:return
+                frame=names.index(name)
+            view,recipe,catalog,_=script_preview_snapshot(self.project,key,self.plan,frame,before=before,selected=selected)
+            title=('Current' if before else 'Proposed')+' text · '+recipe['label']
+            show_snapshot(self.owner,self.project,view,recipe,catalog,title,True)
         except (ValueError,RuntimeError,OSError) as error:self.status.setText(str(error))
 
     def inspect(self):

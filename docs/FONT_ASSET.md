@@ -132,23 +132,33 @@ wrapping. Apply, Undo, project saves and game export all carry the chosen font.
 The native layout advances by whole pixels, so a single space cannot advance
 by 5.5 px at a given scale.
 
-## Approach choice cards
+## Scenario and Approach choice cards
 
-With revision 8 selected, translated Latin and Vietnamese Approach topic and
-choice labels can use proportional lettering even on the fixed-cursor cards.
+With revision 8 or later selected, translated Latin and Vietnamese ordinary
+choices, Approach topics, and Approach subchoices can use proportional bitmap
+strips on the fixed-cursor cards.
 Eligible plain labels use the configured font's letter and space widths. The
 editor packs the ink into 24 px strips and adds transparent glyphs to give the
 native centering function the measured width it needs. Preview and game export
 use the same strips. Project text stays editable. Export adds the bitmap glyphs
 and their lookup codes while retaining the original choice conditions and targets.
-Packed Approach labels also adjust the gaps within words using the 24 px ink
+Packed labels also adjust the gaps within words using the 24 px ink
 masks. They tighten visibly open pairs and give touching strokes some room.
 The review used attested Vietnamese syllables in lowercase and initial-capital
 contexts, including `ươi`, `ười`, and the different tone marks. Word spacing
 uses the selected font's space glyph.
 
 Use `format_text` to check the width against the usable card interior. Preview
-the labels in the **Profiles / approach** scene under **Approach topics / choices**.
+the labels in **Scenario choices** or **Profiles / approach → Approach topics /
+choices**.
+
+With a project font patch selected, translated dialogue, battle choices and
+Approach results select proportional Latin glyphs alongside Vietnamese glyphs.
+The same choice of glyphs is applied by Auto-fit, the scenario renderer, archive
+export and sampled UI previews including backlog. Measured UI assets such as
+dialogs, profile responses, and the profile result format follow their recorded
+consumer layout even when reopened from older projects. Native breaks and
+embedded directives or format operands are retained.
 
 ## Limits
 

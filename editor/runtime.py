@@ -11,7 +11,8 @@ import threading
 from .archive import Archive, describe
 from .semantics import condition, numeric, dispatch, flow_index, signed16
 from .text import TextPresentation, unicode_text
-from .pairspacing import config_for, shape_script
+from .pairspacing import config_for
+from .textlayout import script_font_text
 from . import environments
 from . import presentation
 from . import progression,profileflow
@@ -125,7 +126,7 @@ class Session:
             catalog=build_catalog(self.root);prepare(ui_text_assets,self.root,catalog,check_metadata=False,pairing=pairing)
             def read_asset(source,route):
                 identity=source+':'+('/'.join(map(str,route)))
-                return effective_node(catalog,identity,ui_text_assets,pairing=pairing) if identity in catalog.nodes else catalog.read(source,route)[0]
+                return effective_node(catalog,identity,ui_text_assets,pairing=pairing,font=candidate.text) if identity in catalog.nodes else catalog.read(source,route)[0]
             if any(key.startswith(('env/env_otaku_mode.dat:','first.dat:3/','resource.dat:3/1/')) for key in ui_text_assets):
                 archive=Archive(catalog.source('resource.dat'));scripts_archive=Archive(archive.read(4))
                 candidate.profile_metadata=profileflow.load(self.root,archive,[e.name for e in scripts_archive.entries],read_asset)
@@ -140,7 +141,9 @@ class Session:
                     if 'decode_error' in command['args']:
                         issues.append(dict(script=sid,command=command['index'],message=command['args']['decode_error']))
                 for index in item.get('check_text',[]):
-                    c=data['commands'][index];candidate.text.validate(c['opcode'],c['args'])
+                    c=data['commands'][index]
+                    candidate.text.validate(c['opcode'],c['args'])
+                    c['authored']=True
             except (ValueError,IndexError,KeyError) as e:issues.append(dict(script=sid,command=-1,message=str(e)))
         result=dict(issues=issues,warnings=[])
         if not issues and apply:
@@ -321,7 +324,7 @@ class Session:
         elif op==0x64 and (lane or not queued):
             if a['selector'] or a['completion']:raise ValueError('Message selector/append route is not implemented in the Python preview')
             parsed=self.text.format.ordinary(a['text']);body,_=self.text.format.prepare(parsed['body'],unit_text=True)
-            wire = shape_script(a['text'], op, a, 'text', self.text.format, getattr(self.text, 'pair_spacing', None))
+            wire = script_font_text(self.text, a['text'], op, a, 'text', authored=c.get('authored', False))
             displayed = self.text.format.ordinary(wire)['body'] if wire != a['text'] else body
             glyphs=self.text.layout(displayed,width=self.settings['battle']['width'] if self.split_dialogue else None,ruby=parsed['ruby'])
             side=0 if not self.split_dialogue or a['speaker'] in {-1,self.side0} else 1
@@ -329,10 +332,10 @@ class Session:
                                  'glyphs':glyphs,'revealed':False,'forced':False,'command':index,'fired':set()}
             if a['voice']>=0:self.channels[7+side*2]=dict(kind='dialogue',track=a['voice'])
         elif op in presentation.TEXT_OPS:
-            self.surface=presentation.prepare(self,op,a)
+            self.surface=presentation.prepare(self,op,a,authored=c.get('authored',False))
             if op==0x65:state['saved_day']=self.day;self.day=False
             if op==0x3ec:self.chapter=a['chapter'];self.titles=a['texts'][:]
-            if op in {0x65,0x3f2,0x3f6}:presentation.choice_rows(self,self.surface,a)
+            if op in {0x65,0x3f2,0x3f6}:presentation.choice_rows(self,self.surface,a,authored=c.get('authored',False))
         elif op==0x3ed:self.begin_profile(a['id'])
         elif op==0x3fa:
             state['outcome']=1 if self.battle<50 else 0 if self.battle>50 else 2
@@ -714,7 +717,8 @@ class Session:
         extras=dict(choices=[],text_items=[dict(text=m['body'],role='dialogue',revealed=m['revealed']) for m in messages],panels=[],text_waiting=c['opcode']==0x64 and active_message and not pending and self.boundary not in {0,4,5,7},
                     text_ready=all(m['revealed'] for m in messages),text_kind='Dialogue' if messages else '',text_note='')
         if self.surface is not None:
-            if c['opcode'] in {0x65,0x3f2,0x3f6}:presentation.choice_rows(self,self.surface,c['args'])
+            if c['opcode'] in {0x65,0x3f2,0x3f6}:
+                presentation.choice_rows(self,self.surface,c['args'],authored=c.get('authored',False))
             extras=presentation.packets(self,self.surface);glyphs+=extras.pop('glyphs')
             if self.boundary==4:extras['text_waiting']=False;extras['choices']=[]
         if self.gate:

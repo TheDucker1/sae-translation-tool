@@ -45,6 +45,42 @@ class FontStyleChecks(unittest.TestCase):
         self.assertEqual(shape_script('Ｔô', 0x3F2, {}, 'choices[0].label', formatter, pairing), 'Ｔô')
         self.assertEqual(shape_profile('Ｔôｉ', pairing).encode('cp932').decode('cp932'), '龠齟ｉ')
 
+    def test_approach_result_uses_proportional_latin_and_retains_breaks(self):
+        from editor.textlayout import script_font_text
+
+        font = font_fixture()
+        draft = 'Người cười\nTươi!'
+        self.assertEqual(script_font_text(font, draft, 0x3F8, {}, '', authored=True), draft)
+        font.asset_sha256 = 'fixture'
+        wire = script_font_text(font, draft, 0x3F8, {}, '', authored=True)
+        self.assertEqual(wire, 'Ｎｇườｉ ｃườｉ\nＴươｉ！')
+        settings = settings_fixture()
+        settings['approach']['result_width'] = 550
+        packet = TextLayoutService(font, settings).wrap(0x3F8, draft)
+        self.assertEqual(packet['text'], wire.replace('\n', font.format.break_char))
+        self.assertEqual(packet['line_count'], 2)
+
+    def test_script_font_respects_visible_fields_and_timing(self):
+        from editor.textlayout import script_font_text
+
+        font = font_fixture()
+        font.asset_sha256 = 'fixture'
+        dialogue = 'Eriri「Look《SP QUE,1,2700》here」'
+        self.assertEqual(script_font_text(font, dialogue, 0x64, {}, 'text', authored=False), dialogue)
+        self.assertEqual(script_font_text(font, dialogue, 0x64, {}, 'text', authored=True),
+                         'Eriri「Ｌｏｏｋ《SP QUE,1,2700》ｈｅｒｅ」')
+        self.assertEqual(script_font_text(font, 'Tươi', 0x3F2, {}, 'choices[1].label', authored=True), 'Ｔươｉ')
+        self.assertEqual(script_font_text(font, 'Tươi', 0x3F2, {}, 'choices[0].label', authored=True), 'Tươi')
+        self.assertEqual(script_font_text(font, 'Ｔươｉ', 0x65, {}, 'choices[0].label', authored=True), 'Tươi')
+
+    def test_measured_ui_fitting_preserves_printf(self):
+        from editor.uifitting import ConsumerLayout
+
+        font = font_fixture()
+        font.asset_sha256 = 'fixture'
+        layout = ConsumerLayout(font, dict(width=400, height=100, scale=1), ['Tươi'])
+        self.assertEqual(layout.wrap(0x3F8, '％ %ls')['text'], '％ %ls')
+
     def test_approach_bitmap_tiles_compensate_for_native_centering(self):
         from editor.choiceart import ChoiceAtlas, measured_width
         from editor.fontpatch import font_atlas
