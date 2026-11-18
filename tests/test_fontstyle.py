@@ -97,6 +97,8 @@ class FontStyleChecks(unittest.TestCase):
         atlas = ChoiceAtlas(font)
         wire, width = atlas.encode('iWiW', 24)
         self.assertEqual(width, 41)
+        self.assertEqual(atlas.geometry[wire].bounds(24), (0, width))
+        self.assertEqual(atlas.geometry[wire].bounds(18), (0, 31))
         self.assertLess(len(wire), len('iWiW'))
         self.assertEqual(atlas.encode('iWiW', 24), (wire, width))
         self.assertEqual(atlas.encode('日本語', 24), ('日本語', None))
@@ -118,6 +120,24 @@ class FontStyleChecks(unittest.TestCase):
         self.assertEqual(optical_shift(left, 4, right, 3, 6), -2)
         self.assertEqual(optical_shift(left, 4, right, 3, 2), 0)
         self.assertEqual(optical_shift(left, 4, right, 3, 1), 1)
+
+    def test_packed_captions_fit_native_measurement_and_panel_scales(self):
+        from editor.choiceart import _tile_layout, measured_width, caption_panel
+
+        ink=48
+        for side,panel_size in enumerate((30,0)):
+            width,count,offset,extra=_tile_layout(ink,23,'center',panel_size,-20)
+            records=[24]*count+extra
+            measured=sum(measured_width(record,23) for record in records)
+            panel_measure=sum(measured_width(record,panel_size) for record in records)
+            anchor=948 if side else 12
+            left,panel,center=caption_panel(anchor,side,-20,panel_measure)
+            text_x=center-measured//2+offset*23//24
+            self.assertGreaterEqual(text_x,left)
+            self.assertLessEqual(text_x+width,left+panel)
+            self.assertLessEqual(left+panel,960)
+        width,_,offset,extra=_tile_layout(ink,27,'left',None,0)
+        self.assertEqual((width,offset,extra),(54,0,[]))
 
     def test_vietnamese_bitmap_geometry_preserves_tall_and_deep_marks(self):
         from PySide6.QtWidgets import QApplication

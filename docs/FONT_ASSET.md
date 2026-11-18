@@ -132,7 +132,7 @@ wrapping. Apply, Undo, project saves and game export all carry the chosen font.
 The native layout advances by whole pixels, so a single space cannot advance
 by 5.5 px at a given scale.
 
-## Scenario and Approach choice cards
+## Proportional fixed-cursor text
 
 With revision 8 or later selected, translated Latin and Vietnamese ordinary
 choices, Approach topics, and Approach subchoices can use proportional bitmap
@@ -142,6 +142,12 @@ editor packs the ink into 24 px strips and adds transparent glyphs to give the
 native centering function the measured width it needs. Preview and game export
 use the same strips. Project text stays editable. Export adds the bitmap glyphs
 and their lookup codes while retaining the original choice conditions and targets.
+Chapter and battle introduction captions use the same strips at their authored
+sizes. Battle Auto-fit measures each panel using the same width calculation as
+the game and keeps its caption inside the panel.
+Eligible plain UTF-16 UI strings also use packed labels or rows. These include
+right-aligned help, title labels, dialog buttons, and profile names and tips.
+The editor retains native row boundaries and measures serialized cells for tips.
 Packed labels also adjust the gaps within words using the 24 px ink
 masks. They tighten visibly open pairs and give touching strokes some room.
 The review used attested Vietnamese syllables in lowercase and initial-capital
@@ -159,6 +165,11 @@ export and sampled UI previews including backlog. Measured UI assets such as
 dialogs, profile responses, and the profile result format follow their recorded
 consumer layout even when reopened from older projects. Native breaks and
 embedded directives or format operands are retained.
+
+Generator revision 10 adds narrower variants of the original keyword brackets.
+They apply around native keyword tags in authored, untimed dialogue. Preview
+shows keyword color, underlining and ruby readings. Auto-fit preserves the
+configured word spacing when it proposes the upgrade.
 
 ## Limits
 

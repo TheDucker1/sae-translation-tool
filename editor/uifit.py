@@ -1,6 +1,8 @@
 """Asset-backed profile tips and explicit UI fitting coverage."""
+from functools import lru_cache
 import re
-from .text import cursor_advance,units,unicode_text
+from unicodedata import name
+from .text import fixed_extent,units,unicode_text
 
 
 TIP_COLUMNS='Profile tips column limit'
@@ -22,20 +24,32 @@ def profile_context(catalog,records):
     return dict(field=field,original=original,columns=columns)
 
 
-def fixed_width(text,size):
-    return sum(cursor_advance(c, size) for c in units(text))
+def row_metrics(font,size,text):
+    from .choiceart import make_label
+    packed=make_label(font,text,size,align='left')
+    if packed:return len(packed.cells),packed.width
+    row=units(text)
+    return len(row),fixed_extent(row,size,font)
 
 
-def wrap_tip(text,separator,columns,width,size,*,reflow=False,hyphenate=True,max_rows=3):
+def wrap_tip(text,separator,columns,width,size,*,reflow=False,hyphenate=True,max_rows=3,metrics=None):
     """Three explicit native rows, bounded by pixels AND UTF16 split count."""
     if not separator or columns<1 or size<2 or width<size:raise ValueError('Invalid profile tips geometry')
     text=text.replace('\r\n','\n').replace('\r','\n').replace('\n',separator)
     if reflow:text=' '.join(part.strip() for part in text.split(separator))
     rows=[]
-    fits=lambda value:len(units(value))<=columns and fixed_width(value,size)<=width
+    metrics=lru_cache(maxsize=1024)(metrics or (lambda value:(len(units(value)),fixed_extent(units(value),size,None))))
+    def fits(value):
+        count,extent=metrics(value)
+        return count<=columns and extent<=width
     for hard in text.split(separator):
+        words=re.findall(r'\S+',hard)
+        merged=' '.join(words)
+        if fits(merged):
+            rows.append(merged)
+            continue
         line=''
-        for word in re.findall(r'\S+',hard):
+        for word in words:
             candidate=line+' '+word if line else word
             if fits(candidate):line=candidate;continue
             if line:rows.append(line);line=''
@@ -51,17 +65,63 @@ def wrap_tip(text,separator,columns,width,size,*,reflow=False,hyphenate=True,max
         rows.append(line)
     if len(rows)>max_rows:raise ValueError(f'Text needs {len(rows)} rows; native panel has {"three" if max_rows==3 else max_rows}. Shorten the description.')
     return dict(text=separator.join(rows),lines=rows,width=width,size=size,columns=columns,
-                line_widths=[fixed_width(row,size) for row in rows])
+                line_widths=[metrics(row)[1] for row in rows],line_cells=[metrics(row)[0] for row in rows])
 
 
-def tip_geometry(catalog,font):
+def tip_geometry(catalog,font=None):
     from .compositionmodes import profile_environment,profile_separator
     from .composition import EnvironmentLibrary
     env=profile_environment(catalog.source('env/env_otaku_mode.dat'))
-    size=int(font.utility*env['description_scale'])
+    if font is None:
+        import struct
+        utility=struct.unpack_from('<i',catalog.source('env/env_game_utility.dat'),3)[0]
+    else:utility=font.utility
+    size=int(utility*env['description_scale'])
     # Authored18 full Japanese cells, not18 narrow Latin cells. Keep that area.
     return dict(size=size,width=env['columns']*size,
         separator=profile_separator(EnvironmentLibrary(catalog.root)))
+
+
+def fit_profile_tip(catalog,field,text,font,columns,*,reflow=False,hyphenate=False,geometry=None):
+    from .choiceart import ui_row_placement
+    from .compositionmodes import description_lines
+    geometry=geometry or tip_geometry(catalog,font)
+    packing=ui_row_placement(field,font)
+    if packing:metrics=lambda row:row_metrics(font,geometry['size'],row)
+    else:
+        def metrics(text):
+            row=units(text)
+            return len(row),fixed_extent(row,geometry['size'],font)
+    separator=geometry['separator']
+    value=text.replace('\r\n','\n').replace('\r','\n').replace('\n',separator)
+
+    def native_rows():
+        rows=description_lines(value,separator,columns)
+        widths=[fixed_extent(row,geometry['size'],font) for row in rows]
+        if max(widths,default=0)>geometry['width']:
+            raise ValueError('Profile tips extend outside the authored text area')
+        return dict(text=value,lines=[unicode_text(row) for row in rows],line_widths=widths,
+                    line_cells=list(map(len,rows)),columns=columns,native_character_wrap=True,**geometry)
+
+    try:
+        if len(units(text))>4096:raise ValueError('UI text exceeds the 4096 UTF-16 unit editing limit')
+        if font is not None and not reflow and not any('LATIN' in name(c,'') for c in text if c.isalpha()):
+            from .textcleanup import japanese_text
+            if japanese_text(text,font.format):
+                return native_rows()
+        try:
+            return wrap_tip(value,columns=columns,reflow=reflow,hyphenate=hyphenate,metrics=metrics,**geometry)
+        except ValueError:
+            # Keep the original input path for older fonts when the native
+            # character-based layout already produces valid rows.
+            if not packing and not reflow:return native_rows()
+            raise
+    except ValueError as error:
+        raise ValueError(f'{field["field_id"]}: {error} ({geometry["width"]}px per row, {columns} UTF-16 cells)') from error
+
+
+def pack_rows(text,separator,size,encode):
+    return separator.join(encode(row,size,align='left')[0] for row in text.split(separator))
 
 
 def preserved_tip_edits(catalog,node,records,edits):
@@ -77,19 +137,26 @@ def preserved_tip_edits(catalog,node,records,edits):
             edits[i]=separator.join(unicode_text(row) for row in rows)
 
 
-def validate_tips(catalog,node,records,spans):
+def validate_tips(catalog,node,records,spans,font=None,*,packed=False):
     context=profile_context(catalog,records)
     if not context or not node['table'] or node['table'][2]!='profile_items':return
-    from .compositionmodes import description_lines,profile_separator
-    from .composition import EnvironmentLibrary
-    from .compositionmodes import profile_environment
-    import struct
-    separator=profile_separator(EnvironmentLibrary(catalog.root))
-    env=profile_environment(catalog.source('env/env_otaku_mode.dat'))
-    utility=struct.unpack_from('<i',catalog.source('env/env_game_utility.dat'),3)[0]
-    size=int(utility*env['description_scale']);width=context['original']*size
-    for span in spans:
-        if span.role.endswith('description'):
-            rows=description_lines(span.text,separator,context['columns'])
-            if any(fixed_width(row,size)>width for row in rows):
-                raise ValueError('Profile tips extend outside the authored text area; use Auto-fit or shorten the description')
+    from .compositionmodes import description_lines
+    from .choiceart import ChoiceAtlas,ui_row_placement
+    geometry=tip_geometry(catalog,font)
+    separator,size,width=(geometry[key] for key in ('separator','size','width'))
+    columns=context['columns']
+    validation_atlas=ChoiceAtlas(font) if not packed and getattr(font,'pair_spacing',None) else None
+    for i,span in enumerate(spans):
+        if not span.role.endswith('description'):continue
+        field_id=node['id']+'#s'+str(i)
+        text=span.text.split('\0',1)[0]
+        if validation_atlas and field_id in records and ui_row_placement(catalog.fields[field_id],font):
+            text=pack_rows(text,separator,size,validation_atlas.encode)
+        try:
+            rows=description_lines(text,separator,columns)
+        except ValueError as error:
+            raise ValueError(f'{field_id}: {error} ({columns} UTF-16 cells per row)') from error
+        for line,row in enumerate(rows,1):
+            extent=fixed_extent(row,size,font)
+            if extent>width:
+                raise ValueError(f'{field_id}: profile tip row {line} is {extent}px; the panel fits {width}px. Use Auto-fit or shorten it.')

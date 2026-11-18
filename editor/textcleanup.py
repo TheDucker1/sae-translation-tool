@@ -70,7 +70,16 @@ def append_context_commands(project,sid):
     return {c.uid for i,c in enumerate(script.commands) if c.opcode==0x64 and (i not in before or True in before[i])}
 
 
+class PageFitError(ValueError):
+    pass
+
+
 def split_pages(service,text,mode,width,max_lines,hyphenate):
+    try:return _split_pages(service,text,mode,width,max_lines,hyphenate,reserve_quotes=False)
+    except PageFitError:return _split_pages(service,text,mode,width,max_lines,hyphenate,reserve_quotes=True)
+
+
+def _split_pages(service,text,mode,width,max_lines,hyphenate,*,reserve_quotes):
     """Repeat the native speaker/quote form and balance keywords across pages."""
     f=service.font.format;source,body,pairs,_=service.projection(0x64,text);parsed=f.ordinary(source)
     if parsed['markers']:raise ValueError('Timed SP QUE text cannot be paginated automatically')
@@ -82,11 +91,10 @@ def split_pages(service,text,mode,width,max_lines,hyphenate):
         if source[pairs[-1][2]:]:raise ValueError('Trailing speaker controls require manual pagination')
         payload=source[pairs[0][2]:last]
     elif parsed['name'] or body.startswith(quote):raise ValueError('Unbalanced/aside speaker quotation requires manual pagination')
-    # Reserve both repeated quote glyphs while packing pages. This is conservative
-    # on interior lines and prevents adding a closing quote from overflowing one.
+    # Only reserve repeated quotes if a page boundary overflowed at full width.
     allowance=sum(max(int(service.font.measure(c,service.font.utility)*service.font.scale),
                       int(service.font.measure(f.tokens[4][1] if c==f.tokens[4][0] else c,service.font.utility)*service.font.scale))
-                  for c in units(opening+closing))
+                  for c in units(opening+closing)) if reserve_quotes else 0
     wrapped=service.wrap(0x64,source,width=width-allowance,dialogue_mode=mode,hyphenate=hyphenate)
     source=wrapped['text']
     if opening:
@@ -122,8 +130,9 @@ def split_pages(service,text,mode,width,max_lines,hyphenate):
     if current or not pages:pages.append(prefix+opening+current+closing)
     verified=[]
     for page in pages:
-        packet=service.wrap(0x64,page,width=width,dialogue_mode=mode,hyphenate=hyphenate)
-        if packet['line_count']>max_lines:raise ValueError('Repeated speaker/controls exceed page capacity')
+        try:packet=service.wrap(0x64,page,width=width,dialogue_mode=mode,hyphenate=hyphenate)
+        except ValueError as error:raise PageFitError(str(error)) from error
+        if packet['line_count']>max_lines:raise PageFitError('Repeated speaker/controls exceed page capacity')
         if f.ordinary(packet['text'])['name']!=parsed['name']:raise ValueError('Pagination would change the parsed speaker')
         verified.append(packet)
     return verified

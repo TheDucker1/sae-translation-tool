@@ -30,6 +30,23 @@ def cursor_advance(character, size):
     return size // 2 if 0x20 <= code <= 0x7E or 0xFF61 <= code <= 0xFFA0 else size
 
 
+def glyph_draw_width(font,character,size):
+    glyph=font.cached.get(character) if font is not None else None
+    if not glyph:return cursor_advance(character,size)
+    if not size:return glyph[3]
+    height=font.bitmap_height
+    return (glyph[3]*size+height-1)//height
+
+
+def fixed_extent(row,size,font):
+    """Right edge of the visible cells, including any cached-glyph overhang."""
+    pen=extent=0
+    for char in row:
+        if not char.isspace():extent=max(extent,pen+glyph_draw_width(font,char,size))
+        pen+=cursor_advance(char,size)
+    return extent
+
+
 class TextFormat:
     def __init__(self, data):
         r = Reader(data); r.take(3)

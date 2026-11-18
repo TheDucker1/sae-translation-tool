@@ -143,5 +143,13 @@ class AutoFitLayouts(unittest.TestCase):
         self.assertEqual(preserved['line_count'],3);self.assertEqual(repaired['line_count'],1)
         self.assertEqual(repaired['text'],'A「One two three.」')
 
+    def test_single_battle_row_keeps_its_own_available_width(self):
+        shapes=[dict(width=180,capacity=1),dict(width=112,capacity=2)]
+        regions=SimpleNamespace(rectangles=lambda **_:shapes)
+        service=TextLayoutService(self.font,self.settings,regions=regions)
+        packet=service.wrap(0x64,'One two.',dialogue_mode='battle')
+        self.assertEqual((packet['line_count'],packet['width']),(1,180))
+        self.assertEqual(service.measure_dialogue('One two.',dialogue_mode='battle')['line_count'],1)
+
 
 if __name__=='__main__':unittest.main()

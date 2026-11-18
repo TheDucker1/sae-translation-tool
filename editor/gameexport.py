@@ -12,7 +12,7 @@ from .seekwriter import relocate
 from .imageassets import stamp
 from .imagecodec import ImageError, ImageCancelled
 from .engine import TEXT_OPS
-from .textlayout import script_font_text
+from .textlayout import field_path, script_font_text
 from .textureexport import prepare_textures, patch_tree, changed_paths
 from .uitext import prepare as prepare_ui_text
 
@@ -111,11 +111,13 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     reserved = set(pairing['restore']) if pairing else set()
     used_aliases = set()
     choice_atlas = None
-    approach_keys = set()
+    approach_wires = set()
+    choice_wires = set()
     font_face = None
     authored_ops = {c.opcode for s in project.scripts.values() for c in s.commands if c.authored} if project.font_asset else set()
     authored_choices = pairing and bool({0x65, 0x3F6} & authored_ops)
-    if (TEXT_OPS & authored_ops) or (project.font_asset and project.ui_text_assets):
+    authored_captions = pairing and bool({0x3EC, 0x3F9} & authored_ops)
+    if pairing or (TEXT_OPS & authored_ops) or (project.font_asset and project.ui_text_assets):
         from .fontpatch import effective_font
         from .text import TextPresentation
 
@@ -123,13 +125,25 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
                             'env/env_string_format.dat', 'env/env_config.dat', 'env/env_global.dat', 'env/env_message_window.dat')
         source_stamps.update({name: stamp(root/name) for name in settings_sources})
         font_face = effective_font(project, TextPresentation(root))
-    if authored_choices:
+    if pairing:
         from .choiceart import END_CARRIER, FIRST_CARRIER, ChoiceAtlas, approach_metrics
         from .engine import text_fields
         from .uitext import get_catalog
 
-        source_stamps.update({name: stamp(root/name) for name in ('env/env_approach.dat', 'env/env_script_select.dat')})
-        metrics = approach_metrics(root, font_face.utility)
+        if authored_choices:
+            source_stamps.update({name: stamp(root/name) for name in ('env/env_approach.dat', 'env/env_script_select.dat')})
+            metrics = approach_metrics(root, font_face.utility)
+        if authored_captions:
+            from .environments import chapter_text, battle
+            from .choiceart import caption_panel_size
+            if 0x3EC in authored_ops:
+                chapter_file='env/env_script.dat'
+                source_stamps[chapter_file]=stamp(root/chapter_file)
+                chapter_size=int(font_face.utility*chapter_text((root/chapter_file).read_bytes())['scale'])
+            if 0x3F9 in authored_ops:
+                battle_file='env/env_tukkomi.dat'
+                source_stamps[battle_file]=stamp(root/battle_file)
+                versus=battle((root/battle_file).read_bytes())
         unavailable = {char for s in project.scripts.values() for c in s.commands
                        for _, text in text_fields(dict(opcode=c.opcode, args=c.args)) for char in text
                        if FIRST_CARRIER <= ord(char) < END_CARRIER}
@@ -149,10 +163,17 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
         used_aliases.update(reserved.intersection(wire))
         if choice_atlas is not None and authored and opcode in {0x65, 0x3F6}:
             size, _ = metrics['child' if opcode == 0x65 or '.children[' in field else 'parent']
-            key = (wire, size)
-            wire, width = choice_atlas.encode(*key)
-            if opcode == 0x3F6 and width is not None:
-                approach_keys.add(key)
+            text=wire
+            wire, width = choice_atlas.encode(text,size)
+            if width is not None:
+                choice_wires.add((text,size,wire))
+                if opcode==0x3F6:approach_wires.add((text,size,wire))
+        elif choice_atlas is not None and authored and opcode==0x3EC:
+            wire,_=choice_atlas.encode(wire,chapter_size,align='left')
+        elif choice_atlas is not None and authored and opcode==0x3F9:
+            scale=versus['text_scale'];side=field_path(field)[1]
+            wire,_=choice_atlas.encode(wire,int(font_face.utility*scale),
+                panel_size=caption_panel_size(scale,side),panel_padding=versus['padding'])
         return wire
 
     locations=project.locations();changed={};objects={}
@@ -177,7 +198,8 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     report['textures']=texture_rows
     report['changed_textures']=sum(row['changed'] for row in texture_rows)
     try:ui_changes,ui_rows,ui_catalog=prepare_ui_text(getattr(project,'ui_text_assets',{}),root,
-                                                     pairing=pairing,used_aliases=used_aliases,font=font_face)
+                                                     pairing=pairing,used_aliases=used_aliases,font=font_face,
+                                                     pack_label=choice_atlas.encode if choice_atlas else None)
     except ValueError as error:raise ExportError('UI text export validation failed: '+str(error)) from error
     if pairing:
         from .fontpatch import pack, sections
@@ -185,12 +207,14 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
         remove_unused_font_records(parts, pairing, used_aliases)
         if choice_atlas and choice_atlas.glyphs:
             choice_atlas.append_to(parts)
-            report['font_asset']['packed_choice_labels'] = dict(unique_labels=len(choice_atlas.labels),
-                                                         generated_glyphs=len(choice_atlas.glyphs))
-            if approach_keys:
-                approach_glyphs = {char for key in approach_keys for char in choice_atlas.labels[key][0]}
-                report['font_asset']['approach_labels'] = dict(unique_labels=len(approach_keys), generated_glyphs=len(approach_glyphs))
+            report['font_asset']['packed_labels'] = dict(unique_labels=len(choice_atlas.labels), generated_glyphs=len(choice_atlas.glyphs))
+            for name,wires in (('packed_choice_labels',choice_wires),('approach_labels',approach_wires)):
+                if wires:
+                    glyphs={char for _,_,wire in wires for char in wire}
+                    report['font_asset'][name] = dict(unique_labels=len(wires), generated_glyphs=len(glyphs))
         font = pack(parts)
+        report['font_asset']['project_font_sha256'] = report['font_asset']['font_sha256']
+        report['font_asset']['font_sha256'] = hashlib.sha256(font).hexdigest()
         report['font_asset']['pair_spacing'] = dict(pairing['summary'], exported_aliases=len(used_aliases))
     report['ui_text']=ui_rows;report['changed_ui_text']=sum(row['changed'] for row in ui_rows)
     if ui_catalog:

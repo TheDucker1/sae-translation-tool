@@ -1,5 +1,6 @@
 """Choose text aliases for native variable-layout and fixed-cursor consumers."""
 import re
+from unicodedata import normalize
 
 from .uitextcodec import PRINTF
 
@@ -7,7 +8,7 @@ from .uitextcodec import PRINTF
 FIXED='fixed_cursor'
 LAYOUT='measured_layout'
 UNKNOWN='consumer_unverified'
-NOTES={FIXED:'Native DrawString uses fixed cells. The upgraded font supplies readable Latin bitmap letters in those cells; spacing remains fixed.',
+NOTES={FIXED:'Native DrawString uses fixed cells. Eligible labels can pack proportional Latin glyphs into those cells.',
        LAYOUT:'Native layout uses measured glyph advances. The selected proportional font aliases are supported.',
        'layout_setting':'Typed asset layout setting, not translated display text. Auto-fit derives its safe range from the original layout.',
        UNKNOWN:'The renderer for this field is not verified; font normalization is unavailable.'}
@@ -59,7 +60,20 @@ def match_style(value,font,renderer):
     return dict(text=text,changed=text!=value,renderer=renderer,note=note)
 
 
-def ui_proposal(project,field_id,text,font):
+def project_ui_font(project):
+    from .pairspacing import config_for
+    from .text import TextPresentation
+    asset=project.font_asset
+    key=(project.root,asset['manifest']['font_sha256'])
+    cached=getattr(project,'_ui_style_font',None)
+    if not cached or cached[0]!=key:
+        font=TextPresentation(project.root,font_asset=bytes.fromhex(asset['data_hex']))
+        font.asset_sha256=key[1];font.pair_spacing=config_for(asset)
+        cached=(key,font);project._ui_style_font=cached
+    return cached[1]
+
+
+def ui_proposal(project,field_id,text,font,*,fit_tip=False,reflow=False,records=None):
     from .uitext import get_catalog,wire_value
     from .pairspacing import config_for
     catalog=get_catalog(project)
@@ -67,14 +81,22 @@ def ui_proposal(project,field_id,text,font):
     field=catalog.fields[field_id]
     if not field['editable']:raise ValueError(field['reason'] or 'Protected UI field')
     if project.font_asset and field['renderer'] in {FIXED,LAYOUT} and font is None:
-        from .text import TextPresentation
-        key=(project.root,project.font_asset['manifest']['font_sha256'])
-        cached=getattr(project,'_ui_style_font',None)
-        if not cached or cached[0]!=key:
-            cached=(key,TextPresentation(project.root,font_asset=bytes.fromhex(project.font_asset['data_hex'])))
-            project._ui_style_font=cached
-        font=cached[1]
+        font=project_ui_font(project)
+    original=text
+    is_tip=field['fit_policy']=='profile_tips'
+    if is_tip:text=normalize('NFC',text)
     result=match_style(text,font,field['renderer']) if project.font_asset else dict(text=text,changed=False,renderer=field['renderer'],note='Select a proportional font asset to match font aliases.')
+    if is_tip and fit_tip and text!=field['original']:
+        from .uifit import fit_profile_tip,profile_context
+        context=profile_context(catalog,project.ui_text_assets if records is None else records)
+        if context is not None:
+            layout=fit_profile_tip(catalog,field,result['text'],font,context['columns'],reflow=reflow)
+            note=f'Profile tip fits {len(layout["lines"])} of 3 rows at {layout["width"]}px per row.'
+            if layout.get('native_character_wrap'):note+=' Uses the game’s character-based line breaks.'
+            result.update(text=layout['text'],layout=layout,note=note)
+        else:
+            result['note']='Profile tip layout is unavailable without the profile environment.'
+    result['changed']=result['text']!=original
     from .uitextcodec import encode_span
     node=catalog.nodes[field['node_id']];span=node['spans'][field['index']]
     encode_span(span,wire_value(span,result['text'],config_for(project.font_asset)))

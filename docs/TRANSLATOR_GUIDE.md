@@ -184,6 +184,10 @@ Export prepares the matching font records and script labels together.
 Upgrade to font revision 9 before reviewing Vietnamese Approach labels. The
 revised `ơ` and `ư` horns and optical letter gaps appear in the packed preview
 and export.
+Proportional strips also cover chapter titles, battle intro captions and eligible
+UTF-16 UI labels and rows. Check their actual bounds through Auto-fit and
+source-bound previews. Revision 10 tightens the brackets around tagged keywords
+in untimed dialogue. Keep the native tags and punctuation in editable text.
 Review `ui_changes` with script/font proposals and Apply once; Undo restores all
 three. `include_ui=false` explicitly limits the batch to script/font work.
 UI cleanup now normalizes the selected font first, then checks each consumer's
@@ -208,10 +212,11 @@ The storage prompt's two fragments are fitted together; keep their proposals
 selected together. Font revision5 displays the native capacity append as7456
 through a bitmap-cache entry, without executable changes. Source-bound previews
 are static compositions, not emulator captures.
-UI text… retains Match font in draft for individual edits. MCP exposes
-renderer/font_guidance and format_ui_text. Verified dialog
-and profile response layouts keep proportional aliases. Fixed-cursor UI remains
-monospaced; unverified consumers retain text with an explicit capability notice.
+Use **Format draft** in **UI text…** for individual edits. MCP exposes
+`renderer`, `font_guidance` and `format_ui_text`. Verified dialogs and profile
+responses keep proportional aliases. Eligible fixed-cursor labels pack
+proportional glyphs into native cells. Fields without a verified layout display
+a capability notice.
 A rejected field is reported individually; other fitting fields
 in the command remain eligible. Single-line labels that are too long need shortening.
 For older projects with timed breaks, undo timed wrapping or replace breaks with spaces
@@ -367,11 +372,13 @@ reflect effective strings. Live GUI changes refresh the human's UI text browser;
 stale drafts reject rather than overwriting an agent/human edit. Scenario preview
 is invalidated so a new replay loads translated profile/battle metadata.
 
-UI text is not auto-fit or word-wrapped. Ordinary DrawString labels do not gain
-multiline behavior from LF; dialog/description authored separators use ＿. Keep
-translations concise and inspect the appropriate rendered screen. Profile result
-buffer and CG nonempty-title rules are validated; passing structural validation
-is not a visual-fit or native-rendering acceptance claim.
+Profile tips wrap on Apply using the active font, the panel width and the native
+three-row limit. Enter or ＿ preserves an explicit row. Use **Reflow existing
+line breaks** in Auto-fit or `format_ui_text(reflow=true)` to replace older
+breaks. The format tool returns fitted rows and widths in game pixels.
+DrawString labels stay single-line. Profile result buffers and nonempty CG
+titles have their own validation rules. Inspect the appropriate preview to
+check the rendered result.
 
 export_game_copy merges UI text with scripts/textures/fonts in a separate complete
 copy; archive seek offsets/checksums are updated. Source files and executables are

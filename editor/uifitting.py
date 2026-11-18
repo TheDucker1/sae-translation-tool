@@ -1,11 +1,12 @@
 """Normalize once, then fit/check UI with the consumer's actual native rules."""
 from copy import copy
 import math,re
-from .text import units,unicode_text
+from .text import fixed_extent,units,unicode_text
 from .textlayout import TextLayoutService,native_newlines
 from .uitextcodec import PRINTF
-from .uifit import fixed_width,profile_context,tip_geometry,wrap_tip
+from .uifit import fit_profile_tip,profile_context,row_metrics,tip_geometry,wrap_tip
 from .uipanel import fit_panel
+from .choiceart import make_label,ui_label_placement,ui_row_placement
 
 
 def substitute(value,arguments):
@@ -37,7 +38,16 @@ class ConsumerLayout(TextLayoutService):
 
     def dimensions(self,*args,**kw):
         c=self.contract
-        return dict(width=c['width'],native_width=c['width'],scale=c['scale'],region=None,layout='ui_measured')
+        return dict(width=c['width'],native_width=c.get('native_width',c['width']),scale=c['scale'],region=None,
+                    layout='ui_measured',row_widths=c.get('row_widths'),panel_capacity=c.get('panel_capacity'))
+
+    def measure_existing(self,value,tags=False):
+        c=self.contract;spec=self.dimensions()
+        text,_=self.font.format.prepare(self.wire_text(0x3f8,value,''),font_tags=tags)
+        glyphs=self.font.layout(text,spec['native_width'],spec['scale'])
+        widths=self.check_row_widths(glyphs,spec)
+        self.check_box(0,'',len(widths),spec)
+        return dict(text=value,line_count=len(widths),line_widths=widths,width=c['width'])
 
     def wire_text(self, opcode, source, field):
         if self.contract.get('profile_response'):
@@ -63,7 +73,7 @@ class ConsumerLayout(TextLayoutService):
         return value,body,pairs,ruby
 
 
-def fixed_check(value,c,font):
+def fixed_check(value,c,font,placement=None):
     size=int(font.utility*c['scale']);values=[]
     if PRINTF.search(value):
         if not c.get('format_samples'):raise ValueError('Formatted UI text needs runtime substitution context; raw placeholders cannot be measured as labels')
@@ -76,9 +86,13 @@ def fixed_check(value,c,font):
             raise ValueError('This UI consumer is single-line; native line breaks are unsupported')
         missing=set(units(text))-(font.charset|font.cached.keys())
         if missing:raise ValueError('The game font has no glyphs for '+repr(unicode_text(''.join(sorted(missing)))))
-        extent=fixed_width(text,size);measured=font.measure(units(text),size);x=c['point'][0]
+        packed=make_label(font,text,placement[0],**placement[1]) if placement else None
+        offset,extent=packed.bounds(size) if packed else (0,fixed_extent(units(text),size,font))
+        measured=packed.measure(size) if packed else font.measure(units(text),size)
+        x=c['point'][0]
         if c.get('align')=='center':x-=measured//2
         elif c.get('align')=='right':x-=measured
+        x+=offset
         right=x+extent
         if x<c['left'] or right>c['right']:
             raise ValueError(f'Single-line UI occupies x={x}..{right} ({extent}px); region x={c["left"]}..{c["right"]}. Shorten this label; it cannot wrap.')
@@ -108,7 +122,7 @@ def field_fit(identity,value,catalog,working,font,*,reflow,hyphenate,skip=False,
         kind=c['kind']
         if kind=='profile_tips':continue
         if kind=='requires_context':raise ValueError(c['note'])
-        if kind=='fixed':checks.extend(fixed_check(value,c,font))
+        if kind=='fixed':checks.extend(fixed_check(value,c,font,ui_label_placement(f,font)))
         elif kind=='retained_text':checks.append(dict(kind=kind,rendered=False,note=c['note']))
         elif kind=='composed_dialog':
             if c['joiner'] not in font.cached:
@@ -130,9 +144,7 @@ def field_fit(identity,value,catalog,working,font,*,reflow,hyphenate,skip=False,
             def fit(region):
                 layout=ConsumerLayout(font,region)
                 if skip:
-                    glyphs=font.layout(layout.display_body(0x3f8,value,prepared,''),region['width'],region['scale'])
-                    count=max((g['line'] for g in glyphs),default=-1)+1;layout.check_box(0,'',count,{})
-                    return dict(text=value,line_count=count,width=region['width'],normalization_only=True)
+                    return dict(layout.measure_existing(value,tags=c.get('tags',False)),normalization_only=True)
                 packet=layout.wrap(0x3f8,value,reflow=reflow,hyphenate=hyphenate)
                 return dict(text=packet['text'],line_count=packet['line_count'],line_widths=packet['line_widths'],
                     width=region['width'],panel_capacity=region.get('panel_capacity'),row_widths=region.get('row_widths'))
@@ -140,30 +152,41 @@ def field_fit(identity,value,catalog,working,font,*,reflow,hyphenate,skip=False,
         elif kind=='fixed_rows':
             if c['leading']<=0 or c['height']<=0:raise ValueError('Invalid native description row spacing or height')
             size=int(font.utility*c['scale']);rows=max(1,(c['height']-size)//c['leading']+1)
+            def metrics(line):
+                if ui_row_placement(f,font):return row_metrics(font,size,line)
+                row=units(line)
+                return len(row),fixed_extent(row,size,font)
             if skip:
-                lines=value.split(c['separator']);widths=[fixed_width(line,size) for line in lines]
+                lines=value.split(c['separator']);widths=[metrics(line)[1] for line in lines]
                 if max(widths,default=0)>c['width']:raise ValueError('Existing description exceeds its authored row width')
                 packet=dict(text=value,lines=lines,line_widths=widths,normalization_only=True)
-            else:packet=wrap_tip(value,c['separator'],4096,c['width'],size,reflow=reflow,hyphenate=hyphenate,max_rows=rows)
+            else:packet=wrap_tip(value,c['separator'],4096,c['width'],size,reflow=reflow,hyphenate=hyphenate,max_rows=rows,metrics=metrics)
             if len(packet['lines'])>rows:raise ValueError(f'UI description needs {len(packet["lines"])} rows; panel fits {rows}')
             value=packet['text'];checks.append(packet)
         elif kind=='help_group':
             if c['rectangle'] is None:raise ValueError('Scenario-navigation help requires its native owner rectangle; this table does not store one')
             size=int(font.utility*c['scale']);cursor=0;left=c['rectangle'][0];right=left+c['rectangle'][2]
-            occupied=[];slots=[]
+            occupied=[]
             for entry in c['members']:
                 text=current(catalog,working,entry['field_id'])
                 if '\n' in text or '\r' in text or font.format.break_char in text:raise ValueError('Button-help labels are single-line')
                 missing=set(units(text))-(font.charset|font.cached.keys())
                 if missing:raise ValueError('The game font has no glyphs for '+repr(unicode_text(''.join(sorted(missing)))))
-                prefix=0;draw_prefix=0
+                prefix=0;draw_prefix=0;icon_width=0
                 if entry['key']!=-1:
                     key=c['keys'][entry['key']];prefix=font.measure(units(key),font.utility)+font.measure(units(c['separator']),size)
                     draw_prefix=font.measure(units(key),0)
-                nxt=cursor+prefix+font.measure(units(text),size)+c['gap'];x=right-nxt+draw_prefix
-                end=x+fixed_width(text,size);occupied.append((x,end));slots.append((x-draw_prefix,end));cursor=nxt
+                    icon_width=fixed_extent(units(key),0,font)
+                placement=ui_label_placement(catalog.fields[entry['field_id']],font) if entry['field_id'] in working else None
+                packed=make_label(font,text,size,**placement[1]) if placement else None
+                measured=packed.measure(size) if packed else font.measure(units(text),size)
+                nxt=cursor+prefix+measured+c['gap'];slot=right-nxt;x=slot+draw_prefix
+                if packed:x+=packed.left
+                end=x+(packed.width if packed else fixed_extent(units(text),size,font))
+                occupied.append((min(x,slot) if icon_width else x,max(end,slot+icon_width) if icon_width else end))
+                cursor=nxt
             if any(a<left or b>right for a,b in occupied):raise ValueError(f'Combined button help exceeds its {c["rectangle"][2]}px strip. Shorten labels in this help row.')
-            ordered=sorted(slots)
+            ordered=sorted(occupied)
             if any(a[1]>b[0] for a,b in zip(ordered,ordered[1:])):raise ValueError('Combined button help overlaps neighboring labels/icons. Shorten labels in this help row.')
             checks.append(dict(group=c['group'],bounds=occupied,width=c['rectangle'][2]))
         elif kind=='hex_color':
@@ -174,16 +197,25 @@ def field_fit(identity,value,catalog,working,font,*,reflow,hyphenate,skip=False,
             if not template:raise ValueError('Profile result template/layout missing')
             tid,contract=template;text=current(catalog,working,tid)
             def fit_result(region):
-                candidate=text
+                candidates=[text]
                 if kind=='profile_result_template' and not skip:
-                    for index,args in enumerate(variants):
-                        candidate=ConsumerLayout(font,region,args).wrap(0x3f8,candidate,reflow=reflow and index==0,hyphenate=hyphenate)['text']
-                for args in variants:
-                    full=substitute(candidate,args)[0]
-                    if len(units(full))>=128:raise ValueError('Combined profile result exceeds its128-unit native buffer')
-                    plain,_=font.format.prepare(full,font_tags=True);glyphs=font.layout(plain,region['width'],region['scale'])
-                    ConsumerLayout(font,region).check_box(0,'',max((g['line'] for g in glyphs),default=-1)+1,{})
-                return candidate,region
+                    candidates=[]
+                    for args in variants:
+                        try:candidates.append(ConsumerLayout(font,region,args).wrap(
+                            0x3f8,text,reflow=reflow,hyphenate=hyphenate)['text'])
+                        except ValueError:continue
+                    candidates.append(text)
+                failure=None
+                layout=ConsumerLayout(font,region)
+                for candidate in dict.fromkeys(candidates):
+                    try:
+                        for args in variants:
+                            full=substitute(candidate,args)[0]
+                            if len(units(full))>=128:raise ValueError('Combined profile result exceeds its 128-unit native buffer')
+                            layout.measure_existing(full,tags=True)
+                    except ValueError as error:failure=error
+                    else:return candidate,region
+                raise failure
             text,region=fit_panel(project,catalog,font,contract,fit_result)
             if kind=='profile_result_template':value=text
             checks.append(dict(kind='profile_result',variants=len(variants),width=region['width'],
@@ -221,29 +253,43 @@ def analyze_ui(project,font,asset,*,reflow=False,hyphenate=True,skip_japanese=Tr
     for identity,text in list(working.items()):
         try:working[identity]=ui_proposal(view,identity,text,font)['text']
         except ValueError as error:issues.append(dict(script_id=None,command_id=identity,reason=str(error)))
-    context=profile_context(catalog,project.ui_text_assets);tip=None
-    if context and any(catalog.fields[key]['fit_policy']=='profile_tips' and not(skip_japanese and japanese_text(value,font.format)) for key,value in before.items()):
-        tip=tip_geometry(catalog,font);tip['columns']=context['original']*2;working[context['field']['field_id']]=str(tip['columns'])
+    context=profile_context(catalog,project.ui_text_assets);tip=None;tip_plans={}
+    tip_fields=[key for key,value in before.items() if catalog.fields[key]['fit_policy']=='profile_tips'
+                and not(skip_japanese and japanese_text(value,font.format))]
+    if context and tip_fields:
+        tip=tip_geometry(catalog,font);columns=context['columns'];maximum=context['original']*2
+        for key in tip_fields:
+            try:tip_plans[key]=fit_profile_tip(catalog,catalog.fields[key],working[key],font,maximum,
+                reflow=reflow,hyphenate=hyphenate,geometry=tip)
+            except ValueError as error:tip_plans[key]=error
+        if any(max(packet['line_cells'],default=0)>columns for packet in tip_plans.values() if isinstance(packet,dict)):
+            columns=maximum
+            working[context['field']['field_id']]=str(columns)
     for identity in list(working):
         f=catalog.fields[identity];value=working[identity];skip=skip_japanese and japanese_text(value,font.format)
         try:
             if f['fit_policy']=='layout_setting':assessment=[dict(kind='layout_setting')]
             elif f['fit_policy']=='profile_tips':
-                if tip and not skip:
-                    packet=wrap_tip(value,reflow=reflow,hyphenate=hyphenate,**tip);value=packet['text'];assessment=[packet]
+                if identity in tip_plans:
+                    packet=tip_plans[identity]
+                    if isinstance(packet,ValueError):raise packet
+                    packet['columns']=columns
+                    value=packet['text'];assessment=[packet]
                 else:
                     from .compositionmodes import description_lines
-                    geometry=tip_geometry(catalog,font);columns=context['columns']
-                    rows=description_lines(value,geometry['separator'],columns)
-                    widths=[fixed_width(unicode_text(row),geometry['size']) for row in rows]
+                    geometry=tip or tip_geometry(catalog,font);current_columns=columns if tip else context['columns']
+                    rows=description_lines(value,geometry['separator'],current_columns)
+                    widths=[fixed_extent(row,geometry['size'],font) for row in rows]
                     if max(widths,default=0)>geometry['width']:raise ValueError('Existing profile tips extend outside the authored text area')
-                    assessment=[dict(line_count=len(rows),line_widths=widths,width=geometry['width'],columns=columns,normalization_only=True)]
+                    assessment=[dict(line_count=len(rows),line_widths=widths,width=geometry['width'],columns=current_columns,normalization_only=True)]
             else:value,assessment=field_fit(identity,value,catalog,working,font,reflow=reflow,hyphenate=hyphenate,skip=skip,project=project)
             working[identity]=value
             note=('Retained compatibility text; no active Vita draw consumer.' if f['fit_policy']=='retained'
                 else 'Native consumer checked: '+', '.join(dict.fromkeys(c['kind'] for c in f.get('contracts',[]))))
             if any(c['kind']=='composed_dialog' for c in f.get('contracts',[])):note+=' Keep both storage fragment proposals checked.'
-            if f['fit_policy']=='profile_tips':note=f'Profile tips: {tip["width"]}px, {tip["columns"]} units, three rows. Keep the shared column-limit setting checked.' if tip else 'Profile tips: unchanged Japanese text'
+            if f['fit_policy']=='profile_tips':
+                note=f'Profile tips use {assessment[0]["width"]}px per row and the native three-row layout.'
+                if tip and columns!=context['columns']:note+=' Keep the shared column-limit setting checked.'
             if f['fit_policy']=='layout_setting':note='Shared profile-tip column limit. Untouched original rows are preserved; keep checked with the wider tip proposals.'
             checks.append(dict(field_id=identity,command_id=identity,fit_policy=f['fit_policy'],ui_check=True,reason=note,assessment=assessment))
         except (ValueError,KeyError,IndexError,StopIteration,OSError) as error:

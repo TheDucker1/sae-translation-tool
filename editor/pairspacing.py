@@ -2,6 +2,7 @@
 from functools import lru_cache
 from itertools import product
 from math import ceil
+import re
 from string import ascii_letters
 import struct
 import unicodedata
@@ -131,8 +132,19 @@ def script_enabled(opcode, args, field=''):
     return opcode == 0x3F2 and field != 'choices[0].label'
 
 
-def shape_script(text, opcode, args, field, formatter, config):
-    if not config or formatter is None or not script_enabled(opcode, args, field) or not plain(text, formatter):
+def shape_script(text, opcode, args, field, formatter, config, *, keyword_markup=False):
+    if not config or formatter is None or not script_enabled(opcode, args, field):
+        return text
+    if not plain(text, formatter):
+        marks=config.get('keyword_marks')
+        if opcode==0x64 and keyword_markup and marks and '\0' not in text:
+            # Only the wrapper of a native keyword directive uses the compact bracket.
+            opening,closing=map(re.escape,(formatter.tokens[0][0],formatter.tokens[1][0]))
+            tag,end=map(re.escape,(formatter.following[11],formatter.following[12]))
+            pattern=rf'【(?={opening}{tag}\s*=\s*\d+{closing})|(?<={opening}{end}{closing})】'
+            if not re.search(pattern,text,flags=re.IGNORECASE) or formatter.ordinary(text,geometry_only=True)['markers']:
+                return text
+            return re.sub(pattern,lambda match:marks.get(match[0],match[0]),text,flags=re.IGNORECASE)
         return text
     quote = text.find(formatter.following[1]) if opcode == 0x64 else -1
     if quote > 0:

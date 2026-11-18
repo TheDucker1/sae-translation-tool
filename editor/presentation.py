@@ -15,6 +15,18 @@ TEXT_OPS={0x64,0x65,0x3ec,0x3f2,0x3f6,0x3f8,0x3f9}
 def glyph_width(g,scale):return g.get('pixel_advance',int(g['advance']*scale))
 
 
+def ruby_positions(font,glyphs,origin,scale,ranges):
+    size=int(font.utility*font.ruby_scale)
+    for begin,end,reading in ranges:
+        span=[(i,g) for i,g in enumerate(glyphs) if begin<=g['index']<end]
+        if not span:continue
+        index,first=span[0]
+        extent=sum(int(g['advance']*scale) for _,g in span)
+        x=origin[0]+first['x']+extent//2-font.measure(reading,size)//2
+        y=origin[1]+first['y']+font.ruby_y
+        yield index,reading,x,y,size
+
+
 def block(font,value,origin,scale,*,width=None,center=False,baseline=False,rgb=None,tags=False,role='text',single_line=False,packed_choice=False):
     text,colors=(units(value).split('\0',1)[0],[]) if single_line else font.format.prepare(value,font_tags=tags)
     size=int(font.utility*scale)
@@ -22,7 +34,7 @@ def block(font,value,origin,scale,*,width=None,center=False,baseline=False,rgb=N
     ink_width = None
     if packed_choice:
         from .choiceart import preview_label
-        text, ink_width = preview_label(font, text, size)
+        text, ink_width = preview_label(font, text, size, align='center' if center else 'left')
     if single_line:
         glyphs=[];x=0
         for i,c in enumerate(text):
@@ -48,17 +60,21 @@ def prepare(session,op,args,*,authored=False):
         for index,value in enumerate(args['texts']):
             value=script_font_text(f,value,op,args,f'texts[{index}]',authored=authored)
             point=env['positions'][index];size=int(f.utility*env['scale'])
-            surface['blocks'].append(block(f,value,[point[0],point[1]-size//2],env['scale'],role=f'title{index}',single_line=True))
+            surface['blocks'].append(block(f,value,[point[0],point[1]-size//2],env['scale'],role=f'title{index}',single_line=True,packed_choice=authored))
     elif op==0x3f9:
+        from .choiceart import caption_panel, caption_panel_size, preview_label
         env=e['battle'];surface['kind']='Battle introduction'
         size=int(f.utility*env['text_scale']);name_size=int(f.utility*env['name_scale'])
         for side,value in enumerate(args['texts']):
             value=script_font_text(f,value,op,args,f'texts[{side}]',authored=authored)
-            base=env['text_positions'][side];panel_size=int(36*env['text_scale'])
-            panel_width=env['padding']+f.measure(units(value),0 if side else panel_size)
-            center=base[0]+(-panel_width//2 if side else panel_width//2)
-            surface['blocks'].append(block(f,value,[center,base[1]-size//2],env['text_scale'],center=True,
-                                           rgb=[255]*4,role=f'versus{side}',single_line=True))
+            base=env['text_positions'][side]
+            panel_size=caption_panel_size(env['text_scale'],side)
+            wire,width=preview_label(f,value,size,panel_size=panel_size,panel_padding=env['padding']) if authored else (value,None)
+            _,_,center=caption_panel(base[0],side,env['padding'],f.measure(units(wire),panel_size))
+            item=block(f,wire,[center,base[1]-size//2],env['text_scale'],center=True,
+                       rgb=[255]*4,role=f'versus{side}',single_line=True)
+            if width is not None:item.update(text=value,units=units(value),ink_width=width)
+            surface['blocks'].append(item)
             actor=s.side_characters[side]
             if 0<=actor<len(env['names']):
                 pos=env['name_positions'][side];dims=env['name_sizes'][actor]

@@ -151,15 +151,21 @@ class ExtrasDraw:
         shape['w'], shape['h'] = self.c['stretch']; dest = blit('', 15, entry, shape).destination
         layer.destination = dest; self.sprite('Section header', entry, self.c['shared'][0])
     def footer(self, kind, count=None):
-        items, rect = extras_help(self.lib)[kind]
+        help_groups=extras_help(self.lib)
+        items, rect = help_groups[kind]
         if kind == 'music': items = items[(4 if self.state.get('music_mode', 0) == 1 else 2 if self.state.get('music_mode', 0) == 2 else 0) + int(self.state.get('playing', False))]
         viewing = kind == 'cg' and self.state.get('image_view', False) and self.state.get('unlocked', True)
-        if kind == 'cg': items = items[int(viewing)]
-        button_help(self.out, self.lib, self.font, items=items, rectangle=rect)
+        if kind == 'cg':
+            row=1+self.state.get('commentary',0) if viewing else 0
+            if not 0<=row<len(items):raise ImageError('CG help group outside authored table')
+            items=items[row]
+            if viewing:rect=help_groups['root'][1]
+        else:button_help(self.out, self.lib, self.font, items=items, rectangle=rect)
         if kind != 'root':
             panel = kind in ('cg', 'replay') and not viewing
             shared = deepcopy(self.c['shared'][4 if panel else 3]); shared['alignment'] = 0
             self.out.layers.append(blit('Extras help strip', 1, 7 if panel else 6, shared, source='first.dat'))
+        if kind=='cg':button_help(self.out,self.lib,self.font,items=items,rectangle=rect)
         if not viewing:
             self.out.layers.append(blit('Extras back button', 1, 2, self.c['shared'][5], source='first.dat', tint=[255] * 4))
         if count is not None and not viewing:
@@ -384,6 +390,7 @@ PARAMETERS = {'extras': [
     ('first', 'First row (-1 automatic)', 'int', -1, -1, 999), ('scroll', 'Scroll channel %', 'int', 0, 0, 100),
     ('category', 'CG category', 'int', 0, 0, 5), ('page', 'Page in CG category', 'int', 0, 0, 99),
     ('image_view', 'View selected full CG', 'bool', False), ('variant', 'CG image variant', 'int', 0, 0, 19),
+    ('commentary', 'CG commentary help', 'enum', 0, [(0, 'Unavailable'), (1, 'Ready'), (2, 'Playing')]),
     ('playing', 'Preview playing state', 'bool', False), ('elapsed', 'Preview position (seconds)', 'int', 0, 0, 9999),
     ('music_mode', 'Music mode', 'enum', 0, [(0, 'Mode0'), (1, 'Mode1'), (2, 'Mode2')]),
 ]}
@@ -405,7 +412,7 @@ def preview_limits(library, state):
 
 
 def parameter_visible(name, view):
-    if name in ('category', 'page', 'image_view', 'variant'): return view == 1
+    if name in ('category', 'page', 'image_view', 'variant', 'commentary'): return view == 1
     if name in ('playing', 'elapsed', 'music_mode'): return view == 3
     if name in ('first', 'scroll'): return view in (2, 3, 4)
     if name in ('unlocked', 'new'): return view != 0

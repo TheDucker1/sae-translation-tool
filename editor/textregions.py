@@ -33,10 +33,14 @@ class BattleTextRegions:
         self.masks=masks
 
     def rectangle(self,*,choice=False,control=None,ruby=False):
+        regions=self.rectangles(choice=choice,control=control,ruby=ruby)
+        return max(regions,key=region_area) if regions else None
+
+    def rectangles(self,*,choice=False,control=None,ruby=False):
         key=(choice,control,ruby)
         if key in self.cache:return self.cache[key]
         self.load()
-        if not self.masks:return None
+        if not self.masks:return []
         e=self.settings['battle'];font=self.font;shape=e['bubble']
         size=int(font.utility*font.scale);leading=int(font.height*font.scale+font.leading)
         if size<=0 or leading<=0:raise ValueError('Invalid battle text metrics')
@@ -78,14 +82,14 @@ class BattleTextRegions:
                         radius=min(center-(lo-shape.get('sx',0)),hi+1-shape.get('sx',0)-center)
                         row_safe=min(row_safe,max(0,int(2*radius*scale)-4))
                 row_widths.append(row_safe);safe=min(safe,row_safe)
-            if safe>=size*2:candidates.append(dict(width=safe,capacity=count,row_widths=row_widths))
+            if safe>0:candidates.append(dict(width=safe,capacity=count,row_widths=row_widths,
+                geometry='battle_fill_alpha',bubble_types=[0,1,2],margin=2))
         if not candidates:raise ValueError('Battle text has no safe rectangle inside the current bubble textures')
-        # Shared native text is left-aligned inside a centered block. An inscribed
-        # rectangle keeps every row clear of the curved edge without changing draw code.
-        for candidate in candidates:
-            earlier=[c for c in candidates if c['capacity']<=candidate['capacity']]
-            candidate['width']=min(c['width'] for c in earlier) if len(earlier)==candidate['capacity'] else 0
-        result=max(candidates,key=lambda r:(r['width']*r['capacity'],r['width']))
-        if result['width']<size*2:raise ValueError('Battle single/multiline text offsets have no shared safe area')
-        result.update(geometry='battle_fill_alpha',bubble_types=[0,1,2],margin=2)
-        self.cache[key]=result;return result
+        # All rows in a centered block start at the same x. The narrowest row
+        # limits that block, and the one-line and multiline anchors are distinct.
+        self.cache[key]=candidates
+        return candidates
+
+
+def region_area(region):
+    return region['width']*region['capacity'],region['width']

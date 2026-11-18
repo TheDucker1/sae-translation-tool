@@ -2,7 +2,7 @@
 from copy import deepcopy
 import struct
 from .composition import Composition, Layer, sprite, text_layer
-from .compositioncommon import cached, plain_layer, selection_environment, add_shadow
+from .compositioncommon import cached, plain_layer, selection_environment, add_shadow, dialogue_annotations
 from .compositionmodes import visual_sprite
 from .scriptcodec import Reader
 from .imagecodec import ImageError
@@ -41,9 +41,10 @@ def battle_environment(data):
     return e
 
 
-def positioned_plain(name, value, center, y, width, scale, rgba, font, *, offsets=None, tags=False):
-    layer, height = plain_layer(name, value, [0, 0], width, scale, rgba, font, font_tags=tags)
-    extent = text_extent(font, value, width, scale, tags=tags)
+def positioned_plain(name, value, center, y, width, scale, rgba, font, *, offsets=None, tags=False, glyphs=None):
+    layer, _ = plain_layer(name, value, [0, 0], width, scale, rgba, font, font_tags=tags, glyphs=glyphs)
+    extent = (max((g['x'] + int(g['advance'] * scale) for g in glyphs), default=0)
+              if glyphs is not None else text_extent(font, value, width, scale, tags=tags))
     lines = max((glyph['rect'][1] for glyph in layer.glyphs), default=0)
     offset = offsets[int(lines == 0)] if offsets else [0, 0]
     dx, dy = center + offset[0] - extent // 2, y + offset[1]
@@ -70,25 +71,33 @@ def widget_sprite(out, name, entry, bubble, point, base_scale, pulse, rgba):
 
 
 def introduction(out, e, state, font):
+    from .choiceart import caption_panel, caption_panel_size, preview_label
     from .textlayout import script_font_text
     add = lambda name, entry, shape, **kw: visual_sprite(out, name, f'resource.dat:16/{entry}', shape, **kw)
     for i in range(2): add('Battle introduction emblem', 29 + i, e['versus'][i], alpha=255)
-    name_size, size, panel_size = int(font.utility * e['name_scale']), int(font.utility * e['caption_scale']), int(36 * e['caption_scale'])
+    name_size, size = int(font.utility * e['name_scale']), int(font.utility * e['caption_scale'])
     for side in range(2):
         character = state.get('side_' + str(side), side); dimensions = e['name_sizes'][character]
         pos, base = e['name_positions'][side], e['caption_positions'][side]; dw, dh = dimensions
         caption = state.get('caption_' + str(side), '') or 'Introduction preview'
         caption = script_font_text(font, caption, 0x3F9, {}, f'texts[{side}]', authored=True)
-        width = e['padding'] + font.measure(units(caption), 0 if side else panel_size)
+        panel_size = caption_panel_size(e['caption_scale'], side)
+        wire, packed_width = preview_label(font, caption, size, panel_size=panel_size, panel_padding=e['padding'])
+        left, width, midpoint = caption_panel(base[0], side, e['padding'], font.measure(units(wire), panel_size))
         name = add('Battle name panel', 23, e['versus'][3], tint=e['colors'][character])
         name.destination = [pos[0] - (dw if side else 0), pos[1] - dh // 2, dw, dh]
         bar = add('Battle caption panel', 24, e['versus'][2], tint=e['colors'][character])
-        bar.destination = [base[0] - (width if side else 0), base[1] - e['versus'][2]['h'] // 2, width, e['versus'][2]['h']]
-        for label, value, center, y, pixels in (
-            ('Battle participant name', e['names'][character], pos[0] + (-(dw // 2) if side else dw // 2) + e['name_offsets'][character], pos[1] - name_size // 2, name_size),
-            ('Battle introduction caption', caption, base[0] + (-(width // 2) if side else width // 2), base[1] - size // 2, size)):
-            x = center - font.measure(units(value), pixels) // 2
-            out.layers.append(text_layer(label, value, [x, y], pixels, [255] * 4, font))
+        bar.destination = [left, base[1] - e['versus'][2]['h'] // 2, width, e['versus'][2]['h']]
+        name = e['names'][character]
+        name_center = pos[0] + (-(dw // 2) if side else dw // 2) + e['name_offsets'][character]
+        x = name_center - font.measure(units(name), name_size) // 2
+        out.layers.append(text_layer('Battle participant name', name, [x, pos[1] - name_size // 2], name_size, [255] * 4, font))
+        x = midpoint - font.measure(units(wire), size) // 2
+        layer = text_layer('Battle introduction caption', wire, [x, base[1] - size // 2], size, [255] * 4, font)
+        if packed_width is not None:
+            layer.text = caption
+            layer.destination[2] = packed_width
+        out.layers.append(layer)
 
 
 def dialogue(out, e, state, font):
@@ -105,10 +114,12 @@ def dialogue(out, e, state, font):
         sample = native_newlines(value, font.format)
         wire = script_font_text(font, sample, 0x64, {}, 'text', authored=True)
         parsed = font.format.ordinary(wire, geometry_only=True)
+        glyphs = font.layout(parsed['body'],e['width'],font.scale,ruby=parsed['ruby'])
         layer = positioned_plain('Battle dialogue text', parsed['body'], *e['dialogue_positions'][side],
-                                 e['width'], font.scale, font.unread, font, offsets=e['dialogue_offsets'])
+                                 e['width'], font.scale, font.unread, font, offsets=e['dialogue_offsets'],glyphs=glyphs)
         add_shadow(out, layer)
-    out.notes.append('Dialogue text is fully revealed; ruby/keyword visual decorations and actor animation are not composed.')
+        dialogue_annotations(out,font,layer,glyphs,parsed,layer.destination[:2],font.scale)
+    out.notes.append('Dialogue text is fully revealed in the static battle view.')
 
 
 def choices(out, library, e, state, font):

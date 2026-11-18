@@ -7,7 +7,7 @@ import struct
 from .imageassets import stamp
 from .imagecodec import ImageError
 from .scriptcodec import Reader
-from .text import color, cursor_advance, units
+from .text import color, cursor_advance, glyph_draw_width, units
 
 
 FAMILIES = (
@@ -97,14 +97,19 @@ def text_layer(name, text, position, size, rgba, font, *, center=False):
     glyphs, cursor = [], x
     for c, width in zip(chars, widths):
         cached = font.cached.get(c) if font is not None else None
-        drawn = math.ceil(cached[3] * size / font.bitmap_height) if cached and size else cached[3] if cached else width
+        drawn = glyph_draw_width(font,c,size)
         height = size or (font.bitmap_height if cached else 0)
         glyphs.append(dict(code=ord(c), rect=[cursor, y, drawn, height]))
         cursor += width
     extent = max((g['rect'][0] + g['rect'][2] - x for g in glyphs), default=cursor - x)
     height = max((g['rect'][3] for g in glyphs), default=size)
+    logical=getattr(font,'packed_text',{}).get(text,text)
+    packer=getattr(font,'approach_labels',None)
+    packed=packer.geometry.get(text) if packer else None
+    if packed:
+        offset,extent=packed.bounds(size);x+=offset
     return Layer(name, kind='text', destination=[x, y, extent, height],
-                 rgba=list(rgba), text=text, size=size, glyphs=glyphs)
+                 rgba=list(rgba), text=logical, size=size, glyphs=glyphs)
 
 
 class EnvironmentLibrary:
@@ -115,10 +120,14 @@ class EnvironmentLibrary:
         self.ui_text_assets=dict(ui_text_assets or {});self.ui_text_catalog=ui_text_catalog;self.pairing=pairing;self.font=font
 
     def effective(self,source,route,data):
-        if not self.ui_text_assets:return data
-        from .uitext import effective_node
+        from .uitext import STOCK_LABEL_SOURCES,build_catalog,effective_node
+        if not self.ui_text_assets and not (self.pairing and source in STOCK_LABEL_SOURCES):return data
+        if self.ui_text_catalog is None:self.ui_text_catalog=build_catalog(self.root)
+        from .choiceart import preview_label
         identity=source+':'+('/'.join(map(str,route)))
-        if identity in self.ui_text_catalog.nodes:return effective_node(self.ui_text_catalog,identity,self.ui_text_assets,data,pairing=self.pairing,font=self.font)
+        if identity in self.ui_text_catalog.nodes:
+            return effective_node(self.ui_text_catalog,identity,self.ui_text_assets,data,pairing=self.pairing,font=self.font,
+                                  pack_label=lambda text,size,**options:preview_label(self.font,text,size,**options))
         return data
 
     def member(self, source, route):
@@ -318,6 +327,7 @@ def message_layout(e, state, font):
         for i, shape in enumerate(e['cursors']):
             out.layers.append(blit(f'Advance cursor {i}', 1, 2, shape, offset=(0, slide), alpha=alpha))
     if font is not None and state.get('text'):
+        from .compositioncommon import dialogue_annotations
         from .pairspacing import readable
         from .textlayout import native_newlines, script_font_text
         pairing=getattr(font,'pair_spacing',None)
@@ -330,22 +340,21 @@ def message_layout(e, state, font):
         body = Layer('Dialogue text', kind='text', text=readable(parsed['body'], pairing), size=size,
             destination=[*origin, e['width'], max((g['y'] for g in glyphs), default=0) + size], rgba=font.unread[:])
         body.glyphs = [dict(code=g['code'], rect=[origin[0] + g['x'], origin[1] + g['y'],
-                       math.ceil(font.cached[chr(g['code'])][3] * size / font.bitmap_height) if chr(g['code']) in font.cached else
-                       size // 2 if 0x20 <= g['code'] <= 0x7e or 0xff61 <= g['code'] <= 0xffa0 else size,
-                       size]) for g in glyphs]
+                       glyph_draw_width(font,chr(g['code']),size),size]) for g in glyphs]
         # Fully revealed ordinary text is the preview state. Native body shadow is
         # a separate offset pass; name text is not duplicated as a body shadow.
         shadow = deepcopy(body); shadow.name = 'Dialogue shadow'; shadow.rgba = [0, 0, 0, 255]
         for g in shadow.glyphs: g['rect'][0] += 1; g['rect'][1] += 1
         out.layers.extend([shadow, body])
+        dialogue_annotations(out,font,body,glyphs,parsed,origin,font.scale)
         if parsed['name']:
             name_size = int(font.utility * font.name_scale)
             x, y = font.name_origin
             out.layers.append(text_layer('Speaker text', parsed['name'],
                 [x - font.measure(parsed['name'], name_size) // 2, y + slide - name_size // 2],
                 name_size, font.name_color[:3] + [255], font))
-        if parsed['ruby'] or parsed['keywords'] or parsed['markers']:
-            out.notes.append('This static sample shows body/name text; ruby, keyword decoration and timed reveal are not composed yet.')
+        if parsed['markers']:
+            out.notes.append('Timed dialogue is shown fully revealed.')
     return out
 
 

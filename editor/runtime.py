@@ -123,7 +123,7 @@ class Session:
         if ui_text_assets:
             from .uitext import build_catalog,prepare,effective_node
             pairing = config_for(font_asset)
-            catalog=build_catalog(self.root);prepare(ui_text_assets,self.root,catalog,check_metadata=False,pairing=pairing)
+            catalog=build_catalog(self.root);prepare(ui_text_assets,self.root,catalog,check_metadata=False,pairing=pairing,font=candidate.text)
             def read_asset(source,route):
                 identity=source+':'+('/'.join(map(str,route)))
                 return effective_node(catalog,identity,ui_text_assets,pairing=pairing,font=candidate.text) if identity in catalog.nodes else catalog.read(source,route)[0]
@@ -703,14 +703,8 @@ class Session:
                 if any(begin<=i<end for begin,end,_ in m['keywords']):rgb=self.text.keyword_colors[0][:3]
                 x=origin[0]+g['x'];y=origin[1]+g['y'];size=int(self.text.utility*self.text.scale)
                 append(chr(g['code']),x,y,size,rgb+[alpha])
-            for begin,end,reading in m['ruby']:
-                span=[(i,g) for i,g in enumerate(m['glyphs']) if begin<=g['index']<end]
-                if not span:continue
-                first=span[0][1];size=int(self.text.utility*self.text.ruby_scale)
-                extent=sum(int(g['advance']*self.text.scale) for _,g in span)
-                x=origin[0]+first['x']+extent//2-self.text.measure(reading,size)//2
-                y=origin[1]+first['y']+self.text.ruby_y
-                epoch=m['alphas'][span[0][0]];alpha=255 if m['forced'] else 0 if epoch is None else min(255,(self.now-epoch)*255//200)
+            for index,reading,x,y,size in presentation.ruby_positions(self.text,m['glyphs'],origin,self.text.scale,m['ruby']):
+                epoch=m['alphas'][index];alpha=255 if m['forced'] else 0 if epoch is None else min(255,(self.now-epoch)*255//200)
                 append(reading,x,y,size,self.text.unread[:3]+[alpha])
         active_message=any(m['command']==self.pc for m in self.messages.values())
         pending=self.work.get((self.pc,False),{}).get('pending',False)

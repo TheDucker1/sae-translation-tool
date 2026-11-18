@@ -55,4 +55,21 @@ class ModeCompositionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'three'):wrap_tip('word '*100,'/',36,324,18)
 
 
+    def test_tip_wrapping_uses_serialized_cells_when_packed(self):
+        from editor.uifit import wrap_tip
+        packet=wrap_tip('Một câu ngắn','/',3,72,24,metrics=lambda row:(3,68))
+        self.assertEqual(packet['lines'],['Một câu ngắn'])
+        self.assertEqual(packet['line_widths'],[68])
+
+    def test_profile_tip_uses_available_width_and_preserves_explicit_breaks(self):
+        from editor.uifit import wrap_tip
+        geometry=dict(separator='＿',columns=18,width=120,size=18,hyphenate=False)
+        text='aa bbb cccc d eeee'
+        self.assertEqual(wrap_tip(text,**geometry)['lines'],['aa bbb cccc d','eeee'])
+        self.assertEqual(wrap_tip('aa bbb\r\ncccc d eeee',**geometry)['lines'],['aa bbb','cccc d eeee'])
+        self.assertEqual(wrap_tip('aa bbb＿cccc d eeee',reflow=True,**geometry)['lines'],['aa bbb cccc d','eeee'])
+        with self.assertRaisesRegex(ValueError,'4 rows'):
+            wrap_tip('aa＿bb＿cc＿dd',**geometry)
+
+
 if __name__ == '__main__': unittest.main()

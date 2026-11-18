@@ -133,7 +133,7 @@ class VisualContext:
             from .uitext import get_catalog
             ui=getattr(workspace.project,'ui_text_assets',{})
             asset=getattr(workspace.project,'font_asset',None)
-            font=self.font(workspace)[0] if ui and asset else None
+            font=self.font(workspace)[0] if asset else None
             self.library=EnvironmentLibrary(root,catalog=self.catalog,ui_text_assets=ui,ui_text_catalog=get_catalog(workspace.project) if ui else None,
                                             pairing=config_for(asset),font=font)
         replacements = dict(getattr(workspace.project, 'texture_assets', {}))
@@ -214,7 +214,14 @@ class VisualContext:
 
     def scene(self, workspace, family, state=None, include_image=True, max_size=1024, limit=50):
         description = self.describe(family, state); resolved = description['state']; font, consumer = self.font(workspace)
-        composition = self.library.build(family, resolved, font)
+        geometry_font = self.library.font or font
+        composition = self.library.build(family, resolved, geometry_font)
+        if geometry_font is not font:
+            font.cached = font.cached.copy()
+            for char, record in geometry_font.cached.items():
+                if record[0] == -1:
+                    font.cached[char] = record
+                    font.glyph_cache[ord(char)] = geometry_font.glyph_cache[ord(char)]
         if resolved.get('context_image'):
             composition.layers.insert(0, Layer('Chosen context backdrop', asset=resolved['context_image'], source=[0, 0, 960, 544], destination=[0, 0, 960, 544]))
         rows = layer_records(composition, self.catalog)

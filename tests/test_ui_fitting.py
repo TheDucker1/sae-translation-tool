@@ -18,6 +18,7 @@ class UiFittingChecks(unittest.TestCase):
         text=match_style('Ｈｅｌｌｏ ｗｏｒｌｄ',font,FIXED)['text']
         c['right']=200;self.assertEqual(fixed_check(text,c,font)[0]['width'],198)
         with self.assertRaisesRegex(ValueError,'single-line'):fixed_check('Hello＿world',c,font)
+        c['right']=36;self.assertEqual(fixed_check('Hi  ',c,font)[0]['width'],36)
 
     def test_measured_wrapping_uses_native_height_and_preserves_text(self):
         font=self.font();contract=dict(width=320,scale=1,height=108)
@@ -53,6 +54,15 @@ class UiFittingChecks(unittest.TestCase):
         self.assertEqual([r['panel_capacity'] for r in regions],[1,2])
         self.assertEqual(regions[0]['width'],83)
         self.assertEqual(regions[1]['row_widths'],[83,58])
+
+    def test_wide_first_row_is_available_above_narrow_panel_row(self):
+        font=self.font()
+        layout=ConsumerLayout(font,dict(width=126,native_width=200,row_widths=[126,54],scale=1,height=72))
+        formatted=layout.wrap(0x3f8,'One two end')
+        self.assertEqual(formatted['text'],'One two＿end')
+        self.assertEqual(formatted['line_widths'],[126,54])
+        with self.assertRaisesRegex(ValueError,'row 2'):
+            layout.measure_existing('One＿two end')
 
     def test_composed_dialog_wraps_without_serializing_runtime_glyph(self):
         font=self.font();marker=chr(0x1d20)

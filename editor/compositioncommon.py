@@ -4,7 +4,7 @@ import math
 from .composition import Composition, Layer, sprite, blit, text_layer
 from .imagecodec import ImageError
 from .scriptcodec import Reader
-from .text import color, units, unicode_text
+from .text import color, glyph_draw_width, units, unicode_text
 from .pairspacing import readable
 from .textlayout import script_font_text
 from . import environments
@@ -20,21 +20,19 @@ def quad(name, asset, source, destination, rgba=(255, 255, 255, 255)):
     return Layer(name, asset=asset, source=list(source), destination=list(destination), rgba=list(rgba))
 
 
-def plain_layer(name, value, origin, width, scale, rgba, font, *, font_tags=False):
+def plain_layer(name, value, origin, width, scale, rgba, font, *, font_tags=False, glyphs=None):
     """Reuse the Python line formatter with native line-height and glyph-cell drawing."""
     if font is None: raise ImageError('Load original font/layout data before composing text')
     value = value.replace('\r\n', '\n').replace('\n', font.format.break_char)
     text, ranges = font.format.prepare(value, font_tags=font_tags)
-    glyphs = font.layout(text, width, scale)
+    if glyphs is None:glyphs = font.layout(text, width, scale)
     size = int(font.utility * scale)
     if not 0 < size <= 1024: raise ImageError('Text scale outside composition range')
     height = (max((g['line'] for g in glyphs), default=-1) + 1) * int(font.height * scale + font.leading)
     layer = Layer(name, kind='text', text=unicode_text(readable(text, getattr(font, 'pair_spacing', None))), size=size,
                   destination=[*origin, width, height], rgba=list(rgba))
     for index, g in enumerate(glyphs):
-        c = chr(g['code']); cached_glyph = font.cached.get(c)
-        drawn = math.ceil(cached_glyph[3] * size / font.bitmap_height) if cached_glyph else (
-            size // 2 if 0x20 <= g['code'] <= 0x7e or 0xff61 <= g['code'] <= 0xffa0 else size)
+        drawn = glyph_draw_width(font,chr(g['code']),size)
         glyph = dict(code=g['code'], rect=[origin[0] + g['x'], origin[1] + g['y'], drawn, size])
         for start, end, rgb in ranges:
             if start <= index < end: glyph['rgb'] = rgb; break
@@ -46,6 +44,25 @@ def add_shadow(out, layer):
     shadow = deepcopy(layer); shadow.name += ' shadow'; shadow.rgba = [0, 0, 0, layer.rgba[3]]
     for glyph in shadow.glyphs: glyph['rect'][0] += 1; glyph['rect'][1] += 1
     out.layers.extend([shadow, layer])
+
+
+def dialogue_annotations(out,font,body,glyphs,parsed,origin,scale):
+    from .presentation import ruby_positions
+    keywords={i for start,end,_ in parsed['keywords'] for i in range(start,end)}
+    if keywords:
+        color=font.keyword_colors[0][:3]+[body.rgba[3]]
+        underline=Layer('Keyword underline',kind='text',destination=body.destination.copy(),rgba=color,size=body.size)
+        for index,glyph in enumerate(body.glyphs):
+            if index not in keywords:continue
+            glyph['rgb']=color[:3]
+            pos=glyph['rect'][:2]
+            mark=text_layer('',font.format.break_char,pos,body.size,color,font)
+            underline.glyphs.extend(mark.glyphs)
+        add_shadow(out,underline)
+    for _,reading,x,y,size in ruby_positions(font,glyphs,origin,scale,parsed['ruby']):
+        value=unicode_text(reading)
+        out.layers.append(text_layer('Ruby shadow',value,[x+1,y+1],size,font.ruby_shadow[:3]+[body.rgba[3]],font))
+        out.layers.append(text_layer('Ruby reading',value,[x,y],size,body.rgba,font))
 
 
 def selection_environment(data):
@@ -127,10 +144,16 @@ def calendar_layout(library, state, font):
         out.layers.append(blit('Chapter banner', 1, 50, menu.sprite[0x1e4], tint=menu.colors[0x26c][chapter]))
         size = int((font.utility if font else 27) * e['chapter']['scale'])
         texts = state.get('text', '').splitlines()[:2]
+        from .choiceart import preview_label
         for i, value in enumerate(texts):
             value = script_font_text(font, value, 0x3EC, {}, f'texts[{i}]', authored=True)
             x, y = e['chapter']['positions'][i]
-            out.layers.append(text_layer(f'Chapter caption {i}', value, [x, y - size // 2], size, [0, 0, 0, 255], font))
+            wire, width = preview_label(font, value, size, align='left')
+            layer = text_layer(f'Chapter caption {i}', wire, [x, y - size // 2], size, [0, 0, 0, 255], font)
+            if width is not None:
+                layer.text = value
+                layer.destination[2] = width
+            out.layers.append(layer)
     return out
 
 
@@ -174,7 +197,10 @@ def dialog_layout(library, state, font):
     for glyph in prompt.glyphs: glyph['rect'][0] += px; glyph['rect'][1] += py
     out = Composition('Shared dialog', notes=['Measured static modal with authored button group; no confirmation/save action is executed.'])
     out.layers.append(Layer('Modal shade', kind='solid', destination=[0, 0, 960, 544], rgba=[0, 0, 0, 90]))
-    def emit(name, entry, src, dst): out.layers.append(quad(name, f'first.dat:1/{entry}', src, dst, [255, 255, 255, alpha]))
+    def emit(name, entry, src, dst):
+        layer=quad(name, f'first.dat:1/{entry}', src, dst, [255, 255, 255, alpha])
+        out.layers.append(layer)
+        return layer
     rows = body // p[0][5]
     if (settings[4] + 2) * (rows + 2) > 100000: raise ImageError('Dialog exceeds tile budget')
     def row(first, at_y):
@@ -191,17 +217,20 @@ def dialog_layout(library, state, font):
     columns, pattern_rows = width // pattern[4], frame_height // pattern[5]
     if (columns + 1) * (pattern_rows + 1) > 100000: raise ImageError('Dialog pattern exceeds tile budget')
     at_x, at_y = x + e['vectors'][0][0], y + e['vectors'][0][1]
+    frame_clip=[x,y,width,frame_height]
     for r in range(pattern_rows + 1):
         h = frame_height % pattern[5] - e['vectors'][1][1] if r == pattern_rows else pattern[5]
         for c in range(columns):
-            emit(f'Pattern {r}:{c}', 9, [pattern[2], pattern[3], pattern[4], h], [at_x, at_y, pattern[4], h]); at_x += pattern[4]
+            emit(f'Pattern {r}:{c}', 9, [pattern[2], pattern[3], pattern[4], h], [at_x, at_y, pattern[4], h]).clip=frame_clip
+            at_x += pattern[4]
         w = width % pattern[4] - e['vectors'][1][0]
-        emit(f'Pattern remainder {r}', 9, [pattern[2], pattern[3], w, h], [at_x, at_y, w, h])
+        emit(f'Pattern remainder {r}', 9, [pattern[2], pattern[3], w, h], [at_x, at_y, w, h]).clip=frame_clip
     strip, ornament = e['rectangles'][1], e['decoration']
     emit('Separator strip', 0, strip[2:], [x + strip[0], y + strip[1], width - e['offset'][0], e['offset'][1]])
     emit('Dialog ornament', 1, ornament[2:], [x + ornament[0], y + ornament[1], ornament[4], ornament[5]])
     add_shadow(out, prompt)
     if labels:
+        from .choiceart import preview_label
         positions = e['buttons'][len(labels) - 1]
         if len(positions) < len(labels): raise ImageError('Missing dialog button positions')
         baseline = top + height + settings[5]; focus = e['focus']
@@ -209,8 +238,11 @@ def dialog_layout(library, state, font):
             bx, by = x + positions[i][0], baseline + positions[i][1]
             entries = (3, 5) if i == state.get('selected', 0) else (4,)
             for entry in entries: emit(f'Button {i} layer {entry}', entry, focus[2:], [bx - focus[4] // 2, by - focus[5] // 2, focus[4], focus[5]])
-            measured = font.measure(units(pair[1]), button_size)
-            out.layers.append(text_layer(f'Button label {i}', pair[1], [bx - measured // 2, by - button_size // 2],
+            value=pair[1]
+            if value in {'OK','ＯＫ'}:
+                value,_=preview_label(font,value,button_size)
+            measured = font.measure(units(value), button_size)
+            out.layers.append(text_layer(f'Button label {i}', value, [bx - measured // 2, by - button_size // 2],
                                          button_size, e['colors'][1][:3] + [alpha], font))
     return out
 

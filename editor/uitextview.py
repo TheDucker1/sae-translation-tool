@@ -29,7 +29,7 @@ class UiTextBrowser(QDialog):
         footer=QHBoxLayout();layout.addLayout(footer)
         self.apply=QPushButton('Apply field');self.apply.clicked.connect(self.commit);footer.addWidget(self.apply)
         self.revert=QPushButton('Revert field');self.revert.clicked.connect(lambda:self.commit(True));footer.addWidget(self.revert)
-        match=QPushButton('Match font in draft');match.clicked.connect(self.match_font);footer.addWidget(match)
+        match=QPushButton('Format draft');match.clicked.connect(self.match_font);footer.addWidget(match)
         preview=QPushButton('Preview field…');preview.clicked.connect(self.preview_field);footer.addWidget(preview)
         self.note=QLabel();self.note.setWordWrap(True);footer.addWidget(self.note,1)
 
@@ -91,7 +91,7 @@ class UiTextBrowser(QDialog):
         if self.identity is None:return
         try:
             from .fontstyle import ui_proposal
-            proposal=ui_proposal(self.project,self.identity,self.edit.toPlainText(),None)
+            proposal=ui_proposal(self.project,self.identity,self.edit.toPlainText(),None,fit_tip=True)
             self.edit.setPlainText(proposal['text']);self.note.setText(proposal['note']+' Apply field to save this draft.')
         except (ValueError,KeyError,OSError) as error:self.note.setText(str(error))
 
@@ -103,7 +103,7 @@ class UiTextBrowser(QDialog):
             plan=None;draft=self.edit.toPlainText()
             if draft!=self.expected:
                 from .fontstyle import ui_proposal
-                text=ui_proposal(self.project,self.identity,draft,None)['text']
+                text=ui_proposal(self.project,self.identity,draft,None,fit_tip=True)['text']
                 plan=dict(revision=self.revision,ui_changes=[dict(field_id=self.identity,after_text=text)])
             show_ui_preview(self.owner,self.project,self.identity,plan=plan)
         except (ValueError,RuntimeError,OSError) as error:self.note.setText(str(error))

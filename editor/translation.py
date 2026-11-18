@@ -237,14 +237,15 @@ class TranslationWorkspace:
             source_sha256=c.sources[f['source']]['sha256'],member_sha256=node['sha256'],neighbors=neighbors)
 
     @locked
-    def format_ui_text(self,field_id:Id,text:Annotated[str,Field(max_length=8192)]|None=None)->dict[str,Any]:
-        """Propose font aliases for an environment/catalogue field. Inspect renderer/note: measured layouts support proportional aliases, fixed cursors use ordinary ASCII, unverified consumers remain unchanged. Does not mutate. Apply through apply_ui_text."""
+    def format_ui_text(self,field_id:Id,text:Annotated[str,Field(max_length=8192)]|None=None,reflow:bool=False)->dict[str,Any]:
+        """Propose font aliases for a UI field. For a profile tip, fit whole words using the active font and native row bounds; reflow=true replaces prior breaks. Returns line widths for tips. Does not mutate. Apply through apply_ui_text."""
         from .fontstyle import ui_proposal
         from .uitext import get_catalog
         catalog=get_catalog(self.project)
         if field_id not in catalog.fields:raise ValueError('Unknown UI text field_id')
         current=self.project.ui_text_assets.get(field_id,{}).get('text',catalog.fields[field_id]['original'])
-        return dict(revision=self.project.revision,expected_text=current,**ui_proposal(self.project,field_id,current if text is None else text,None))
+        return dict(revision=self.project.revision,expected_text=current,
+                    **ui_proposal(self.project,field_id,current if text is None else text,None,fit_tip=True,reflow=reflow))
 
     @locked
     def repair_ui_text_font(self,expected_revision:Id)->dict[str,Any]:

@@ -53,17 +53,13 @@ def inscribed_rows(alpha,iw,ih,contract,font,destination):
             safe=min(safe,max(0,limit-2))
         for ex,ey,ew,eh in contract.get('excludes',[]):
             if top+size+2>ey and top-2<ey+eh and ex+ew>x:safe=min(safe,max(0,ex-x-2))
-        if safe<size*2:break
+        if safe<=0:break
         rows.append(safe)
-        candidates.append(dict(contract,width=min(rows),height=(len(rows)-1)*leading+size,
+        candidates.append(dict(contract,width=rows[0],native_width=contract['width'],height=(len(rows)-1)*leading+size,
             panel_capacity=len(rows),row_widths=list(rows),geometry='panel_alpha',margin=2))
     if not candidates:raise ValueError('No complete text row fits inside the current panel texture')
     return candidates
 
 
 def fit_panel(project,catalog,font,contract,fit):
-    error=None
-    for region in panel_regions(project,catalog,font,contract):
-        try:return fit(region)
-        except ValueError as failure:error=failure
-    raise error
+    return fit(panel_regions(project,catalog,font,contract)[-1])

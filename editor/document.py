@@ -275,27 +275,38 @@ class Project:
         self.undo_stack.append(item)
 
     def set_ui_texts(self,edits):
-        from .uitext import get_catalog,make_record,prepare
+        from .uitext import get_catalog,make_record
         c=get_catalog(self);before=self.ui_text_assets;after=before.copy()
         seen=set()
-        for identity,expected,text in edits:
+        # Descriptions in the same batch use the proposed shared column limit.
+        for identity,expected,text in sorted(edits,key=lambda edit:c.fields.get(edit[0],{}).get('encoding')!='layout-u32'):
             if identity in seen:raise EditError('Duplicate UI text field in batch')
             seen.add(identity)
             if identity not in c.fields:raise EditError('Unknown UI text field_id')
             current=before[identity]['text'] if identity in before else c.fields[identity]['original']
             if expected!=current:raise EditError('UI text changed; re-read the current field before editing')
-            if self.font_asset and text!=c.fields[identity]['original']:
+            field=c.fields[identity]
+            if (self.font_asset or field['fit_policy']=='profile_tips') and text!=field['original']:
                 from .fontstyle import ui_proposal
-                text=ui_proposal(self,identity,text,None)['text']
+                text=ui_proposal(self,identity,text,None,fit_tip=True,records=after)['text']
             record=make_record(c,identity,text,pairing=config_for(self.font_asset))
-            if text==c.fields[identity]['original']:after.pop(identity,None)
+            if text==field['original']:after.pop(identity,None)
             else:after[identity]=record
         if before==after:return False
-        prepare(after,self.root,c,check_metadata=False,pairing=config_for(self.font_asset))
+        self.validate_ui_records(after,c)
         scripts=self.scripts.copy()
         self.remember(('Edit UI text',scripts,scripts,self.font_asset,self.font_asset,self.texture_assets,self.texture_assets,before,after))
         self.ui_text_assets=after;self.redo_stack=[];self.revision=uuid.uuid4().hex
         return True
+
+    def validate_ui_records(self,records,catalog):
+        from .uitext import prepare
+        pairing=config_for(self.font_asset)
+        font=None
+        if self.font_asset and any(catalog.fields.get(key,{}).get('fit_policy')=='profile_tips' for key in records):
+            from .fontstyle import project_ui_font
+            font=project_ui_font(self)
+        prepare(records,self.root,catalog,check_metadata=False,pairing=pairing,font=font)
 
     def set_texture(self,identity,data,catalog):
         from .textureassets import make_replacement,check_budget
@@ -395,8 +406,8 @@ class Project:
         project.texture_assets=data.get('texture_assets',{})
         project.ui_text_assets=data.get('ui_text_assets',{})
         if project.ui_text_assets:
-            from .uitext import get_catalog,prepare
-            prepare(project.ui_text_assets,base.root,get_catalog(project),check_metadata=False,pairing=config_for(project.font_asset))
+            from .uitext import get_catalog
+            project.validate_ui_records(project.ui_text_assets,get_catalog(project))
         project._texture_catalog=validate_collection(project.texture_assets,base.root)
         if project.font_asset:
             from .fontpatch import validate_asset

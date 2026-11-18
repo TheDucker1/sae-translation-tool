@@ -23,7 +23,7 @@ def font_fixture():
         formatter.following[index]=value
     formatter.mapping={};formatter.break_char='＿'
     font=TextPresentation.__new__(TextPresentation);font.format=formatter
-    font.charset=set(chr(code) for code in range(0xff01,0xff5f));font.cached={}
+    font.charset=set(chr(code) for code in range(0xff01,0xff5f));font.cached={};font.bitmap_height=24
     font.width=400;font.scale=1;font.utility=36;font.height=36;font.leading=0
     font.message_bounds=[0,0,400,150];font.origin=[0,0];font.ruby_scale=.5
     return font

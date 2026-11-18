@@ -1,4 +1,4 @@
-"""Pack proportional Approach labels for Saekano's fixed-cursor DrawString."""
+"""Pack proportional labels for Saekano's fixed-cursor DrawString."""
 from dataclasses import dataclass
 from functools import lru_cache
 from statistics import median
@@ -19,10 +19,19 @@ ROWS_PER_ATLAS = 19  # First row is blank and holds measured centering records.
 class PackedLabel:
     width: int
     cells: tuple
+    left: int
+    source_ink: int
+    source_left: int
+
+    def measure(self, size):
+        return sum(measured_width(width, size) for width, _ in self.cells)
+
+    def bounds(self, size):
+        return self.source_left * size // CELL, (self.source_ink * size + CELL - 1) // CELL
 
 
-def measured_width(record_width):
-    return 1 + record_width * CELL // 36
+def measured_width(record_width, size=CELL):
+    return 1 + record_width * (size or 36) // 36
 
 
 @lru_cache(maxsize=512)
@@ -72,9 +81,83 @@ def approach_metrics(root, utility):
                 child=(int(utility * selection['scale']), interior(selection['words'][4], child_left, child_right)))
 
 
-def make_label(font, text, size):
+def caption_panel_size(scale, side):
+    return 0 if side else int(36 * scale)
+
+
+def caption_panel(anchor, side, padding, measured):
+    width = padding + measured
+    left = anchor - width if side else anchor
+    center = anchor - width // 2 if side else anchor + width // 2
+    return left, width, center
+
+
+def ui_label_placement(field, font):
+    """Only pack UTF-16 strings with one verified, compatible draw contract."""
+    if (not getattr(font, 'pair_spacing', None) or field.get('format_tokens')
+            or field['encoding'].split(' ',1)[0] not in {'counted-utf16', 'utf-16-le'}):
+        return None
+    contracts = field.get('contracts', ())
+    placements = set()
+    for contract in contracts:
+        if contract['kind'] == 'fixed' and not contract.get('format_samples'):
+            align = contract.get('align', 'left')
+        elif contract['kind'] == 'help_group' and contract['rectangle'] is not None:
+            # Group spacing reserves the label's MeasureString width.
+            align = 'right'
+        else:
+            return None
+        placements.add((int(font.utility * contract['scale']), align))
+    calibrated = {(size, align) for size, align in placements if align != 'left'}
+    if len(calibrated) > 1 or not placements:
+        return None
+    size, align = next(iter(calibrated)) if calibrated else max(placements)
+    return size, dict(align=align)
+
+
+def ui_row_placement(field, font):
+    if (not getattr(font, 'pair_spacing', None) or field.get('format_tokens')
+            or field['encoding'].split(' ',1)[0] not in {'counted-utf16', 'utf-16-le'}):
+        return None
+    contracts = field.get('contracts', ())
+    if not contracts or any(c['kind'] not in {'fixed_rows','profile_tips'} for c in contracts):
+        return None
+    if any(not c.get('separator') or 'scale' not in c for c in contracts):
+        return None
+    placements = {(int(font.utility*c['scale']),c['separator']) for c in contracts}
+    return next(iter(placements)) if len(placements)==1 else None
+
+
+def _tile_layout(ink, size, align, panel_size, panel_padding):
+    """Choose transparent records that calibrate native centering and panel sizing."""
+    width = (ink * size + CELL - 1) // CELL
+    count = (ink + CELL - 1) // CELL
+    if align == 'left':
+        return width, count, 0, []
+    while True:
+        measure = count * measured_width(CELL, size)
+        panel = count * measured_width(CELL, panel_size) if panel_size is not None else 0
+        extra = []
+        panel_target = width + 4 - panel_padding if panel_size is not None else 0
+        while measure < width or panel < panel_target:
+            record = next((n for n in range(1, 256)
+                           if measure + measured_width(n, size) >= width
+                           and (panel_size is None or panel + measured_width(n, panel_size) >= panel_target)), 255)
+            extra.append(record)
+            measure += measured_width(record, size)
+            if panel_size is not None:
+                panel += measured_width(record, panel_size)
+        gap = max(0, measure - width if align == 'right' else measure // 2 - width // 2)
+        left = (gap * CELL + size - 1) // size
+        required = (left + ink + CELL - 1) // CELL
+        if required <= count:
+            return width, count, left, extra
+        count = required
+
+
+def make_label(font, text, size, *, align='center', panel_size=None, panel_padding=0):
     """Build fixed cells containing proportional Latin text at the authored size."""
-    if (not getattr(font, 'pair_spacing', None) or size != CELL or font.bitmap_height != CELL
+    if (not getattr(font, 'pair_spacing', None) or not 8 <= size <= 64 or font.bitmap_height != CELL
             or len(text) < 2 or not plain(text, font.format)
             or any(c in text for c in ('\r', '\n', font.format.break_char))):
         return None
@@ -82,7 +165,7 @@ def make_label(font, text, size):
     if not letters or any('LATIN' not in unicodedata.name(c, '') for c in letters):
         return None
     from .textlayout import full_width_text
-    value = narrow(full_width_text(text, font)['text'], font.pair_spacing)
+    value = narrow(full_width_text(text.replace('　',' '), font)['text'], font.pair_spacing)
     if any(c not in font.cached for c in value):
         return None
 
@@ -110,9 +193,8 @@ def make_label(font, text, size):
     if not width:
         return None
 
-    count = (width + CELL - 1) // CELL
-    base_measure = count * measured_width(CELL)
-    left = max(0, base_measure // 2 - width // 2)
+    source_ink = width
+    width, count, left, extra = _tile_layout(source_ink, size, align, panel_size, panel_padding)
     stride = count * CELL
     rows = [bytearray(stride) for _ in range(CELL)]
     for x, mask, record_width, ink in draws:
@@ -123,15 +205,8 @@ def make_label(font, text, size):
                     row[col] = alpha
     cells = [(CELL, b''.join(row[x:x + CELL] for row in rows)) for x in range(0, stride, CELL)]
 
-    # MeasureString and DrawString use different widths. A transparent trailing
-    # glyph fills their difference for centering, without moving any visible ink.
-    remaining = width - base_measure
-    while remaining > 0:
-        advance = min(remaining, measured_width(255))
-        record_width = next(w for w in range(1, 256) if measured_width(w) == advance)
-        cells.append((record_width, None))
-        remaining -= advance
-    return PackedLabel(width, tuple(cells))
+    cells.extend((record_width, None) for record_width in extra)
+    return PackedLabel(width, tuple(cells), left * size // CELL, source_ink, left)
 
 
 class ChoiceAtlas:
@@ -141,21 +216,24 @@ class ChoiceAtlas:
         self.carriers = (chr(code) for code in range(FIRST_CARRIER, END_CARRIER) if chr(code) not in blocked)
         self.glyphs = {}
         self.labels = {}
+        self.geometry = {}
 
-    def encode(self, text, size):
-        key = (text, size)
+    def encode(self, text, size, *, align='center', panel_size=None, panel_padding=0):
+        key = (text, size, align, panel_size, panel_padding)
         if key not in self.labels:
-            label = make_label(self.font, text, size)
+            label = make_label(self.font, text, size, align=align, panel_size=panel_size, panel_padding=panel_padding)
             if label is None:
                 return text, None
-            self.labels[key] = (''.join(self.register(cell) for cell in label.cells), label.width)
+            wire = ''.join(self.register(cell) for cell in label.cells)
+            self.labels[key] = (wire, label.width)
+            self.geometry[wire] = label
         return self.labels[key]
 
     def register(self, cell):
         if cell not in self.glyphs:
             code = next(self.carriers, None)
             if code is None:
-                raise ValueError('Approach label font ran out of unused UTF-16 glyph slots')
+                raise ValueError('Packed font ran out of unused UTF-16 glyph slots')
             self.glyphs[cell] = code
         return self.glyphs[cell]
 
@@ -184,7 +262,7 @@ class ChoiceAtlas:
                 tile_number += 1
             records.append(struct.pack('<4H2B', ord(code), atlas_start + page, x, y, width, CELL))
         if len(parts) + len(atlas_pages) > 258:
-            raise ValueError('Approach label font exceeds the native atlas table capacity')
+            raise ValueError('Packed font exceeds the native atlas table capacity')
         parts[-2] += b''.join(records)
         parts[-2:-2] = [p8_atlas(ATLAS_EDGE, ATLAS_EDGE, bytes(page)) for page in atlas_pages]
 
@@ -203,12 +281,16 @@ class PreviewChoices(ChoiceAtlas):
         return code
 
 
-def preview_label(font, text, size):
+def preview_label(font, text, size, **placement):
     if not getattr(font, 'pair_spacing', None):
         return text, None
     preview = getattr(font, 'approach_labels', None)
     if preview is None:
         preview = font.approach_labels = PreviewChoices(font)
+        font.packed_text = {}
         font.cached = font.cached.copy()
         font.glyph_cache = font.glyph_cache.copy()
-    return preview.encode(text, size)
+    wire, width = preview.encode(text, size, **placement)
+    if width is not None:
+        font.packed_text[wire] = text
+    return wire, width

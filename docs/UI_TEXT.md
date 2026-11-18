@@ -15,7 +15,9 @@ Text baked into an image remains in **Images…**; edit its PNG instead.
 4. Edit the translation and choose **Apply field**. **Revert field** restores the
    original. Normal Undo/Redo includes script, font, texture and UI text changes.
    With a proportional font selected, Apply matches the field's verified renderer.
-   **Match font in draft** previews that selected-field conversion. Batch font
+   **Format draft** prepares the selected field for preview. Profile tips use
+   the current font to fit as many whole words as each native row allows. Enter
+   inserts a native row break. Batch font
    repair is part of **Auto-fit text…**, with **Include translated UI text** enabled
    by default. Script/UI proposals and a readable bitmap font upgrade share one
    review and atomic Apply/Undo. Profile-tip fitting also proposes a shared,

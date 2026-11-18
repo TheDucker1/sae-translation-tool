@@ -5,7 +5,8 @@ import re
 import unicodedata
 from .engine import TEXT_OPS, text_fields
 from .scriptcodec import put
-from .text import cursor_advance,units,unicode_text
+from .text import fixed_extent, units, unicode_text
+from .textregions import region_area
 from .pairspacing import shape_script
 
 
@@ -120,7 +121,7 @@ def script_font_text(font, value, opcode, args, field, *, authored):
         elif opcode in TEXT_OPS and not supports_breaks(opcode):
             from .fontstyle import FIXED, match_style
             value = match_style(value, font, FIXED)['text']
-    return shape_script(value, opcode, args, field, font.format, getattr(font, 'pair_spacing', None))
+    return shape_script(value, opcode, args, field, font.format, getattr(font, 'pair_spacing', None),keyword_markup=authored)
 
 
 class TextLayoutService:
@@ -142,8 +143,7 @@ class TextLayoutService:
 
     def label_width(self,value,scale):
         size=int(self.font.utility*scale)
-        # DrawString advances independently of GSF proportional glyph widths.
-        return sum(cursor_advance(c, size) for c in units(value))
+        return fixed_extent(units(value),size,self.font)
 
     def convert_dialogue_width(self,value,*,width=None,dialogue_mode='auto',preserve_speaker=False,convert=True):
         """One-for-one visible conversion without changing queue indices or breaks."""
@@ -167,8 +167,10 @@ class TextLayoutService:
         spec=self.dimensions(0x64,value=value,width=width,dialogue_mode=dialogue_mode);f=self.font.format
         parsed=f.ordinary(value,geometry_only=True);body,_=f.prepare(parsed['body'],unit_text=True)
         display = self.display_body(0x64, value, body, '')
-        glyphs=self.font.layout(display,width=spec['width'],scale=spec['scale'],ruby=parsed['ruby'])
+        glyphs=self.font.layout(display,width=spec['native_width'],scale=spec['scale'],ruby=parsed['ruby'])
         count=max((g['line'] for g in glyphs),default=0)+1
+        region=next((r for r in self.battle_regions(0x64,'',value,dialogue_mode) if r['capacity']==count),None)
+        if region:spec=self.dimensions(0x64,value=value,width=width,dialogue_mode=dialogue_mode,battle_region=region)
         lines=['' for _ in range(count)];widths=[0]*count
         for g in glyphs:
             line=g['line'];lines[line]+=body[g['index']];widths[line]=max(widths[line],g['x']+int(g['advance']*spec['scale']))
@@ -185,7 +187,16 @@ class TextLayoutService:
                     ruby_overflow=ruby_overflow,contains_plain_newlines='\n' in value or '\r' in value,
                     timed_markers=len(parsed['markers']),measurement='original_command_text',**spec)
 
-    def dimensions(self,opcode,*,field='',value='',width=None,dialogue_mode='auto'):
+    def battle_regions(self,opcode,field,value,dialogue_mode):
+        if not self.regions or (opcode!=0x3f2 and (opcode!=0x64 or self.resolve_mode(dialogue_mode)!='battle')):
+            return []
+        match=re.fullmatch(r'choices\[(\d+)\]\.label',field)
+        control=int(match[1])-1 if match else None
+        if control==-1:return []
+        ruby=opcode==0x64 and bool(self.font.format.ordinary(value,geometry_only=True)['ruby'])
+        return self.regions.rectangles(choice=opcode==0x3f2,control=control,ruby=ruby)
+
+    def dimensions(self,opcode,*,field='',value='',width=None,dialogue_mode='auto',battle_region=None):
         f=self.font;authored=True
         dialogue_mode=self.resolve_mode(dialogue_mode)
         if opcode==0x64:
@@ -224,6 +235,9 @@ class TextLayoutService:
                 points=self.settings['chapter_text']['positions'];match=re.fullmatch(r'texts\[([01])\]',field)
                 points=[points[int(match[1])]] if match else points
                 default=min(960-p[0] for p in points)
+                from .choiceart import make_label
+                packed=make_label(f,value,int(f.utility*scale),align='left')
+                if packed:packed_width=packed.width
             elif opcode==0x65 or opcode==0x3f6 and '.children[' in field:
                 env=self.settings['selection'];points=[p for table in env['points'] for p in table]
                 if self.command and field:
@@ -237,25 +251,27 @@ class TextLayoutService:
                 default=centered(points,env['text_offset'][0])
             elif opcode==0x3f9:
                 env=self.settings['battle'];match=re.fullmatch(r'texts\[([01])\]',field);sides=[int(match[1])] if match else [0,1]
+                from .choiceart import caption_panel, caption_panel_size, make_label
                 limits=[]
                 for side in sides:
-                    panel=env['padding']+f.measure(units(value),0 if side else int(36*env['text_scale']))
-                    base=env['text_positions'][side][0];left=base-panel if side else base
+                    size=int(f.utility*scale);panel_size=caption_panel_size(scale,side)
+                    packed=make_label(f,value,size,panel_size=panel_size,panel_padding=env['padding'])
+                    measure=packed.measure(panel_size) if packed else f.measure(units(value),panel_size)
+                    base=env['text_positions'][side][0];left,panel,center=caption_panel(base,side,env['padding'],measure)
                     if left<0 or left+panel>960:raise ValueError('Single-line caption/panel extends beyond the screen; shorten it')
-                    center=base-panel//2 if side else base+panel//2
-                    start=center-f.measure(units(value),int(f.utility*scale))//2
-                    if start<0:raise ValueError('Single-line caption extends beyond the left screen edge')
+                    if packed:
+                        packed_width=packed.width
+                        offset,_=packed.bounds(size)
+                        start=center-packed.measure(size)//2+offset
+                    else:start=center-f.measure(units(value),size)//2
+                    if start<max(0,left):raise ValueError('Single-line caption starts outside its panel')
                     limits.append(min(960,left+panel)-start)
                 default=min(limits)
         if width is None and default<=0:raise ValueError('Single-line caption/panel extends beyond the screen; shorten it')
-        native_width=default;region=None
-        if self.regions and (opcode==0x64 and dialogue_mode=='battle' or opcode==0x3f2):
-            match=re.fullmatch(r'choices\[(\d+)\]\.label',field)
-            control=int(match[1])-1 if match and int(match[1])>0 else None
-            if not match or int(match[1])!=0:
-                ruby=opcode==0x64 and bool(f.format.ordinary(value,geometry_only=True)['ruby'])
-                region=self.regions.rectangle(choice=opcode==0x3f2,control=control,ruby=ruby)
-                if region:default=min(default,region['width'])
+        native_width=default
+        regions=self.battle_regions(opcode,field,value,dialogue_mode) if battle_region is None else []
+        region=battle_region or max(regions,key=region_area,default=None)
+        if region:default=min(default,region['width'])
         limit=default if width is None else min(default,width)
         if not isinstance(limit,int) or isinstance(limit,bool) or not 1<=limit<=4096:raise ValueError('Wrap width must be 1–4096 game pixels')
         return dict(width=limit,scale=scale,authored_width=default if authored else None,dialogue_mode=dialogue_mode,
@@ -277,6 +293,20 @@ class TextLayoutService:
         size=int(self.font.utility*spec['scale']);leading=int(self.font.height*spec['scale']+self.font.leading)
         if top<0 or top+(line_count-1)*leading+size>544:
             raise ValueError('Choice/result text extends off-screen; shorten it. Branch opcodes cannot be paginated.')
+
+    def check_row_widths(self,glyphs,spec):
+        """Measure rows drawn by the native wrapper against their visual bounds."""
+        widths=[0]*(max((g['line'] for g in glyphs),default=-1)+1)
+        for g in glyphs:
+            if not chr(g['code']).isspace():
+                widths[g['line']]=max(widths[g['line']],g['x']+int(g['advance']*spec['scale']))
+        limits=spec.get('row_widths')
+        if limits is not None:
+            if len(widths)>len(limits):
+                raise ValueError(f'Text needs {len(widths)} rows; this panel fits {len(limits)}.')
+            for i,(width,limit) in enumerate(zip(widths,limits),1):
+                if width>limit:raise ValueError(f'Text row {i} is {width}px wide; this row fits {limit}px.')
+        return widths
 
     def projection(self,opcode,value,*,geometry_only=False):
         """Map prepared UTF16 body units back to exact raw string slices."""
@@ -305,7 +335,7 @@ class TextLayoutService:
 
     def wire_text(self, opcode, source, field):
         args = self.command.args if self.command is not None else {}
-        return shape_script(source, opcode, args, field, self.font.format, getattr(self.font, 'pair_spacing', None))
+        return shape_script(source, opcode, args, field, self.font.format, getattr(self.font, 'pair_spacing', None),keyword_markup=True)
 
     def display_body(self, opcode, source, body, field):
         wire = self.wire_text(opcode, source, field)
@@ -333,6 +363,16 @@ class TextLayoutService:
                 contract=result_contract(result,cursors)
                 panel=panel_regions(self.project,catalog,self.font,contract)[-1]
                 return self._wrap(opcode,checked,original=value,panel=panel,**options)
+            regions=self.battle_regions(opcode,field,checked,dialogue_mode)
+            if regions:
+                for region in regions:
+                    try:packet=self._wrap(opcode,checked,original=value,battle_region=region,**options)
+                    except ValueError:continue
+                    if packet['line_count']==region['capacity']:return packet
+                if opcode==0x3f2:
+                    sizes=', '.join(f"{r['capacity']} × {r['width']}px" for r in regions)
+                    raise ValueError(f'Choice text does not fit the battle bubble row layouts ({sizes}).')
+                return self._wrap(opcode,checked,original=value,battle_region=max(regions,key=region_area),**options)
             return self._wrap(opcode,checked,original=value,**options)
         except ValueError as error:
             if not timed:raise
@@ -340,7 +380,7 @@ class TextLayoutService:
             result['fit_warning']=str(error)
             return result
 
-    def _wrap(self,opcode,value,*,original,field,width,dialogue_mode,hyphenate,full_width_latin,preserve_speaker,panel=None):
+    def _wrap(self,opcode,value,*,original,field,width,dialogue_mode,hyphenate,full_width_latin,preserve_speaker,panel=None,battle_region=None):
         conversion=None;style=None
         timed=opcode==0x64 and bool(self.font.format.ordinary(value)['markers'])
         if self.proportional and not supports_breaks(opcode):
@@ -351,7 +391,7 @@ class TextLayoutService:
             conversion=full_width_text(value,self.font,controls=opcode in {0x64,0x3f2,0x3f8},
                                        preserve_speaker=opcode==0x64 and (preserve_speaker or self.proportional))
             value=conversion['text'];conversion={k:v for k,v in conversion.items() if k!='text'}
-        spec=self.dimensions(opcode,field=field,value=value,width=width,dialogue_mode=dialogue_mode);f=self.font.format
+        spec=self.dimensions(opcode,field=field,value=value,width=width,dialogue_mode=dialogue_mode,battle_region=battle_region);f=self.font.format
         if panel:
             row_widths=[min(spec['width'], n) for n in panel['row_widths']]
             spec.update(width=row_widths[0],width_source='panel_alpha',
@@ -366,22 +406,23 @@ class TextLayoutService:
                         lines=[source],line_widths=[extent],break_character=None,breaks_supported=False,font_style=style,**spec)
         source,body,pairs,ruby=self.projection(opcode,value,geometry_only=timed);scale=spec['scale']
         def line_limit(index):
-            if not panel:return spec['width']
-            if index>=spec['panel_capacity']:
-                raise ValueError(f"Approach result exceeds its {spec['panel_capacity']}-line bubble. Shorten this result.")
+            if spec.get('row_widths') is None:return spec['width']
+            if index>=len(spec['row_widths']):
+                raise ValueError(f"Text exceeds the panel's {len(spec['row_widths'])} rows.")
             return spec['row_widths'][index]
         def advance(c):
             other=f.tokens[4][1] if c==f.tokens[4][0] else c
             return max(int(self.font.measure(c,self.font.utility)*scale),int(self.font.measure(other,self.font.utility)*scale))
-        if line_limit(0)<advance(f.break_char):raise ValueError('Width is too narrow for the native line-break traversal')
+        if spec['native_width']<advance(f.break_char):raise ValueError('Width is too narrow for the native line-break traversal')
         display = self.display_body(opcode, source, body, field)
         hyphen = full_width_text('-',self.font)['text'] if full_width_latin or self.proportional else '-'
         widths=[0 if c==f.break_char else advance(c) for c in display]
         prefix=[0]
         for n in widths:prefix.append(prefix[-1]+n)
+        keyword_aliases=set((getattr(self.font,'pair_spacing',None) or {}).get('keyword_marks',{}).values())
         def span(a,b):
             extent = prefix[b]-prefix[a]
-            if b > a and display[b-1] != body[b-1]:
+            if b > a and display[b-1] != body[b-1] and display[b-1] not in keyword_aliases:
                 # A line break removes the following neighbor that supplied the variant.
                 extent += advance(body[b-1]) - widths[b-1]
             return extent
@@ -455,11 +496,12 @@ class TextLayoutService:
             if any(g['x']-extent/2 < -half or g['x']+int(g['advance']*scale)-extent/2 > half
                    for g in actual if not chr(g['code']).isspace()):
                 raise ValueError('Timed padding would place visible glyphs outside the safe bubble rectangle')
-        if panel and len(lines)>panel['panel_capacity']:
-            raise ValueError(f"Approach result needs {len(lines)} lines; its bubble fits {panel['panel_capacity']}. Shorten this result.")
+        draw_widths=self.check_row_widths(actual,spec) if spec.get('row_widths') is not None else None
         self.check_box(opcode,field,len(lines),spec)
         return dict(text=result,editor_text=editable_newlines(result,f),changed=result!=original,full_width_conversion=conversion,
                     inserted_breaks=0 if timed else len(lines)-1-body.count(f.break_char),line_count=len(lines),
                     break_strategy='spaces' if timed else 'native',
                     hyphenations=len(hyphens),lines=[unicode_text(body[a:b])+(hyphen if b in hyphens else '') for a,b in lines],
-                    line_widths=[span(a,b)+(advance(hyphen) if b in hyphens else 0) for a,b in lines],break_character=f.break_char,breaks_supported=True,**spec)
+                    line_widths=(draw_widths+[0]*(len(lines)-len(draw_widths)) if draw_widths is not None else
+                                 [span(a,b)+(advance(hyphen) if b in hyphens else 0) for a,b in lines]),
+                    break_character=f.break_char,breaks_supported=True,**spec)

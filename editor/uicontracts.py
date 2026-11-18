@@ -137,6 +137,10 @@ class Contracts:
         from .composition import blit
         from .uipanel import result_contract
         response_box = blit('', 1, 0, e['response_window']).destination
+        from .compositionmodes import profile_separator
+        from .composition import EnvironmentLibrary
+        try:separator=profile_separator(EnvironmentLibrary(self.c.root))
+        except (ValueError,OSError,KeyError,IndexError):separator=None
         response_cursors = []
         travel = int(e['cursor_travel'])
         for shape in e['response_cursors']:
@@ -160,7 +164,8 @@ class Contracts:
                     self.fixed(value,[x+dx,y+dy],e['label_scale'],max(500,x),min(960,x+frame['w']),
                         scene=item_scenes.get((node['route'][-1],i//2)))
                 elif span.role.startswith('profile_items') and span.role.endswith('description'):
-                    self.bind(value,'profile_tips',scene=item_scenes.get((node['route'][-1],i//2)))
+                    self.bind(value,'profile_tips',scale=e['description_scale'],separator=separator,
+                              scene=item_scenes.get((node['route'][-1],i//2)))
 
     def prompts(self):
         for field in self.c.fields.values():
@@ -178,7 +183,10 @@ class Contracts:
             def rows(rectangle,name):
                 for i in range(r.count()):items(rectangle,name+'/'+str(i))
             common=rect();items(common,'Common');rows(rect(),'Settings');rows(rect(),'Save / load')
-            root=rect();items(root,'Extras');rows(rect(),'CG');rows(rect(),'Music');rows(root,'Movies');rows(rect(),'Replay')
+            root=rect();items(root,'Extras')
+            grid=rect()
+            for i in range(r.count()):items(grid if i==0 else root,'CG/'+str(i))
+            rows(rect(),'Music');rows(root,'Movies');rows(rect(),'Replay')
             # These tables have no own rectangle. They are supplied by their
             # navigation owner, which is not part of the supported compositions.
             rows(None,'Scenario navigation');items(None,'Scenario confirmation');items(None,'Scenario tools');rows(None,'Scenario skip')
@@ -192,7 +200,8 @@ class Contracts:
             elif name=='Settings' and index<2:scene=dict(family='settings',state=dict(page=index,selected=3 if index else 0))
             elif name=='Save / load' and index<2:scene=dict(family='slots',state=dict(mode=index))
             elif name=='Extras':scene=dict(family='extras',state=dict(view='root'))
-            elif name=='CG' and index<2:scene=dict(family='extras',state=dict(view='cg',image_view=bool(index)))
+            elif name=='CG' and index<4:
+                scene=dict(family='extras',state=dict(view='cg',image_view=bool(index),commentary=max(0,index-1)))
             elif name=='Music' and index<6:
                 scene=dict(family='extras',state=dict(view='music',music_mode=(0,2,1)[index//2],playing=bool(index%2)))
             elif name in ('Movies','Replay') and index==0:scene=dict(family='extras',state=dict(view=name.lower()))
@@ -306,7 +315,7 @@ class Contracts:
                 if i in (1,2,3,7):self.bind(value,'save_metadata',renderer='metadata')
                 elif i==0:self.bind(value,'catalogue_metadata',renderer='metadata',note='Legacy keyword-acquisition template; its opcode has no occurrence in the imported game')
             elif name=='env_keyword.dat':self.bind(value,'catalogue_metadata',renderer='metadata',note='Keyword name catalogue; supported approach choices use their own script labels. No direct draw consumer in the current source.')
-            elif name=='env_system_menu.dat':self.dialog(value)
+            elif name=='env_system_menu.dat':self.dialog(value,group=1+i)
             elif name=='env_otaku_mode.dat' and i<5:
                 self.bind(value,'catalogue_metadata',renderer='metadata',note='Legacy profile caption parts; live result text is assembled from the separate labels/template')
             elif name=='env_saveload.dat' and i==0:
@@ -327,7 +336,7 @@ def annotate(catalog):
             catalog.consumer_issues.append(dict(family=method.__name__,reason=str(error)))
     for identity,contracts in b.bound.items():
         field=catalog.fields[identity]
-        if not field['editable']:continue
+        if not field['editable'] or field['fit_policy']=='layout_setting':continue
         field['contracts']=contracts;field['renderer']=contracts[0]['renderer']
         kinds={c['kind'] for c in contracts}
         metadata={'catalogue_metadata','save_metadata','hex_color','glyph_prefix','separator'}

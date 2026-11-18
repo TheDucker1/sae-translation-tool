@@ -4,7 +4,7 @@ import unicodedata
 from pathlib import Path
 from .text import TextPresentation,font_atlas
 
-GENERATOR_REVISION=9
+GENERATOR_REVISION=10
 WORD_SPACE_WIDTHS = range(3, 10)
 DEFAULT_WORD_SPACE_RECORD = 18
 STORAGE_GLYPH=0x1d20
@@ -185,6 +185,22 @@ def build(root, *, word_space_px=None):
     glyphs.append(dict(character=32,source=' ',index=None,left=0,width=space_width,fixed=False))
     vietnamese=vietnamese_glyphs(font,baseline)
     glyphs.extend(vietnamese)
+    from .pairspacing import build_pairs, carrier_codes
+    unavailable=set(font.cached)|font.charset|{chr(g['character']) for g in glyphs}
+    unavailable.update(font.format.mapping)
+    unavailable.update(font.format.mapping.values())
+    unavailable.update(''.join(font.format.tokens+font.format.following))
+    carriers=carrier_codes(unavailable)
+    keyword_marks={}
+    for char in '【】':
+        index=raw.glyphIndexesForString(char)[0]
+        if not index:continue
+        rect=raw.boundingRect(index);left=math.floor(rect.left());ink=math.ceil(rect.right())-left
+        if ink<=0 or -rect.top()>baseline or math.ceil(rect.bottom())>height-baseline:continue
+        alias=next(carriers);keyword_marks[char]=alias
+        compact=min(ink,7)
+        glyphs.append(dict(character=ord(alias),source=char,index=index,left=left,
+                           width=dialogue_width(compact,font,0),ink_scale=compact/ink,fixed=False))
     atlas_width=512;atlas_height=512;coverage=bytearray(atlas_width*atlas_height)
     records=[];glyph_records={};x=1;y=1;report=[]
     for g in glyphs:
@@ -215,8 +231,9 @@ def build(root, *, word_space_px=None):
     if profile_path.is_file():
         from .compositionmodes import profile_environment
         scales.append(profile_environment(profile_path.read_bytes())['response_scale'])
-    from .pairspacing import build_pairs
     pairing, aliases = build_pairs(font, scales, coverage, atlas_width, glyph_records, vietnamese_characters())
+    pairing['keyword_marks']=keyword_marks
+    pairing['restore'].update({alias:char for char,alias in keyword_marks.items()})
     records.extend(struct.pack('<4H2B', ord(char), *record) for char, record in aliases.items())
     atlas=p8_atlas(atlas_width,atlas_height,bytes(coverage));font_atlas(atlas)
     output=pack(parts[:-2]+[atlas,parts[-2]+b''.join(records),parts[-1]])
@@ -260,10 +277,16 @@ def validate_asset(asset,root):
     if config:
         glyphs = {chr(code): (atlas, x, y, width, height) for code, atlas, x, y, width, height in struct.iter_unpack('<4H2B', changed[-2])}
         reserved = config['restore']
-        if set(reserved) != (set(config['accents'].values()) | set(config['pairs'].values())):
+        marks={alias:base for base,alias in config.get('keyword_marks',{}).items()}
+        if (set(marks.values())-set('【】')
+                or set(reserved) != (set(config['accents'].values()) | set(config['pairs'].values()) | marks.keys())):
             raise ValueError('Pair-spacing charset does not match its glyph mapping')
         for char, base in reserved.items():
             alias = glyphs[char]
+            if char in marks:
+                if marks[char]!=base or alias[0]!=len(changed)-3 or not 0<alias[3]<=36 or alias[4]!=24:
+                    raise ValueError('Invalid keyword bracket glyph')
+                continue
             original_glyph = glyphs[base]
             if (alias[:3] != original_glyph[:3] or not 0 < alias[3] <= original_glyph[3]
                     or alias[4] != original_glyph[4] or char.encode('shift_jis').decode('cp932') != char):
