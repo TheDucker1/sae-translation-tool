@@ -3,10 +3,11 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from editor.choiceart import ChoiceAtlas
 from editor.composition import Composition, EnvironmentLibrary
-from editor.keywordnotice import KEYWORD_ENV, SCRIPT_ENV, TEMPLATE_FIELD, draw, environment
+from editor.keywordnotice import KEYWORD_ENV, SCRIPT_ENV, TEMPLATE_FIELD, environment
 from editor.scriptcodec import string
 from editor.uitext import build_catalog, make_record, prepare
 from editor.uitextcodec import keyword_text
@@ -45,9 +46,9 @@ class KeywordNoticeChecks(unittest.TestCase):
             self.assertEqual(catalog.fields[first_name]['contracts'][0]['scene']['state'],{'keyword':111})
             self.assertEqual(records[first_name]['text'],'Từ khóa')
 
-            preview=Composition('Preview')
             library=EnvironmentLibrary(root,ui_text_assets=records,ui_text_catalog=catalog,font=font,pairing=font.pair_spacing)
-            draw(preview,library,font,111)
+            with patch.object(library,'get',return_value={}), patch('editor.composition.message_layout',return_value=Composition('Preview')):
+                preview=library.build('message',{'keyword':111},font)
             self.assertEqual(preview.layers[0].asset,'resource.dat:1/8')
             layer=preview.layers[-1]
             self.assertEqual(layer.text,'Đã nhận «Từ khóa»')

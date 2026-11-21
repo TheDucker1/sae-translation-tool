@@ -173,14 +173,14 @@ class EnvironmentLibrary:
             builders = {'title': title_layout, 'message': message_layout, 'system': system_layout}
             if family in builders:
                 result = builders[family](self.get(family), state, font)
+                if family == 'message' and font is not None and state.get('keyword', -1) >= 0:
+                    from .keywordnotice import draw
+                    draw(result,self,font,state['keyword'])
             else:
                 from .compositioncommon import ADAPTERS
                 from .compositionlists import ADAPTERS as LIST_ADAPTERS
                 from .compositionsettings import ADAPTERS as SETTINGS_ADAPTERS
                 from .compositionextras import ADAPTERS as EXTRAS_ADAPTERS
-                if family == 'message' and font is not None and state.get('keyword', -1) >= 0:
-                    from .keywordnotice import draw
-                    draw(result,self,font,state['keyword'])
                 from .compositionmodes import ADAPTERS as MODE_ADAPTERS
                 from .compositionbattle import ADAPTERS as BATTLE_ADAPTERS
                 from .compositiontest import ADAPTERS as TEST_ADAPTERS

@@ -254,8 +254,8 @@ ADAPTERS = {'choices': choices_layout, 'calendar': calendar_layout, 'dialogs': d
 # These fields belong to preview state only. The view creates only controls used
 # by the selected family, rather than accumulating disabled fields for every port.
 PARAMETERS = {
-    'choices': [('visited', 'Previously chosen text', 'bool', False)],
     'message': [('keyword', 'Keyword notification ID (-1 hidden)', 'int', -1, -1, 1023)],
+    'choices': [('visited', 'Previously chosen text', 'bool', False)],
     'calendar': [('month', 'Month', 'int', 9, 1, 12), ('day', 'Day', 'int', 1, 1, 31),
                  ('palette', 'Date palette (-1 auto)', 'int', -1, -1, 99),
                  ('show_date', 'Show calendar', 'bool', True), ('show_banner', 'Show chapter banner', 'bool', True)],
