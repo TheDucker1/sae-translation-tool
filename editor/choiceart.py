@@ -155,7 +155,22 @@ def _tile_layout(ink, size, align, panel_size, panel_padding):
         count = required
 
 
-def make_label(font, text, size, *, align='center', panel_size=None, panel_padding=0):
+def stock_symbol_mask(glyph):
+    """Sample a stock PVF symbol in the same cropped cell used by DrawString."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage,QPainter
+    width,height=glyph['width'],glyph['height']
+    image=QImage(bytes.fromhex(glyph['rgba']),width,height,width*4,QImage.Format_RGBA8888).copy()
+    cell=QImage(CELL,CELL,QImage.Format_RGBA8888);cell.fill(0)
+    painter=QPainter(cell)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform)
+    painter.drawImage(QRectF(0,0,CELL,CELL),image,QRectF(*glyph.get('source',[0,0,width,height])))
+    painter.end()
+    return CELL,bytes(cell.constBits())[3::4]
+
+
+def make_label(font, text, size, *, align='center', panel_size=None, panel_padding=0,
+               extra_symbols=frozenset()):
     """Build fixed cells containing proportional Latin text at the authored size."""
     if (not getattr(font, 'pair_spacing', None) or not 8 <= size <= 64 or font.bitmap_height != CELL
             or len(text) < 2 or not plain(text, font.format)
@@ -166,7 +181,7 @@ def make_label(font, text, size, *, align='center', panel_size=None, panel_paddi
         return None
     from .textlayout import full_width_text
     value = narrow(full_width_text(text.replace('　',' '), font)['text'], font.pair_spacing)
-    if any(c not in font.cached for c in value):
+    if any(c not in font.cached and (c not in extra_symbols or c not in font.charset) for c in value):
         return None
 
     draws = []
@@ -174,8 +189,12 @@ def make_label(font, text, size, *, align='center', panel_size=None, panel_paddi
     previous = ''
     for char in value:
         glyph = font.glyph(ord(char))
-        record_width = glyph['width']
-        mask = bytes.fromhex(glyph['rgba'])[3::4]
+        if glyph.get('missing'):return None
+        if char in font.cached:
+            record_width = glyph['width']
+            mask = bytes.fromhex(glyph['rgba'])[3::4]
+        else:
+            record_width,mask=stock_symbol_mask(glyph)
         ink = max((i % record_width + 1 for i, alpha in enumerate(mask) if alpha), default=0)
         if ink:
             if previous.isalpha() and char.isalpha():
@@ -218,10 +237,11 @@ class ChoiceAtlas:
         self.labels = {}
         self.geometry = {}
 
-    def encode(self, text, size, *, align='center', panel_size=None, panel_padding=0):
-        key = (text, size, align, panel_size, panel_padding)
+    def encode(self, text, size, *, align='center', panel_size=None, panel_padding=0, extra_symbols=frozenset()):
+        key = (text, size, align, panel_size, panel_padding, extra_symbols)
         if key not in self.labels:
-            label = make_label(self.font, text, size, align=align, panel_size=panel_size, panel_padding=panel_padding)
+            label = make_label(self.font, text, size, align=align, panel_size=panel_size,
+                               panel_padding=panel_padding, extra_symbols=extra_symbols)
             if label is None:
                 return text, None
             wire = ''.join(self.register(cell) for cell in label.cells)

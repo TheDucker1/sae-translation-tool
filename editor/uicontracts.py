@@ -171,6 +171,21 @@ class Contracts:
         for field in self.c.fields.values():
             if field['role']=='dialog prompt':self.dialog(FieldText(field['original'],field['field_id']))
 
+    def keyword_notices(self):
+        from .keywordnotice import KEYWORD_ENV, SCRIPT_ENV, environment
+        from .uitextcodec import keyword_text
+        if not all(name+':' in self.c.nodes for name in (SCRIPT_ENV, KEYWORD_ENV)):return
+        layout=self.parse(SCRIPT_ENV,environment)
+        entries=self.parse(KEYWORD_ENV,keyword_text)
+        if not entries:return
+        template=layout['template']
+        members=[name.field_id for _,name in entries]
+        sample=111 if 111 in dict(entries) else entries[0][0]
+        self.bind(template,'keyword_template',members=members,scene=dict(family='message',state=dict(keyword=sample)))
+        for keyword,name in entries:
+            self.bind(name,'keyword_component',template=template.field_id,
+                      scene=dict(family='message',state=dict(keyword=keyword)))
+
     def help(self):
         from .compositionlists import global_ui_environment
         style=self.parse('env/env_global.dat',global_ui_environment)
@@ -313,8 +328,6 @@ class Contracts:
                 else:self.retained(value,'Retained platform fallback text: loaded by the environment reader, but not consumed by the Vita startup/dialog paths. No active draw consumer.')
             elif name=='env_script.dat':
                 if i in (1,2,3,7):self.bind(value,'save_metadata',renderer='metadata')
-                elif i==0:self.bind(value,'catalogue_metadata',renderer='metadata',note='Legacy keyword-acquisition template; its opcode has no occurrence in the imported game')
-            elif name=='env_keyword.dat':self.bind(value,'catalogue_metadata',renderer='metadata',note='Keyword name catalogue; supported approach choices use their own script labels. No direct draw consumer in the current source.')
             elif name=='env_system_menu.dat':self.dialog(value,group=1+i)
             elif name=='env_otaku_mode.dat' and i<5:
                 self.bind(value,'catalogue_metadata',renderer='metadata',note='Legacy profile caption parts; live result text is assembled from the separate labels/template')
@@ -328,7 +341,7 @@ class Contracts:
 def annotate(catalog):
     """Bound contracts are immutable source facts; final font metrics come later."""
     b=Contracts(catalog)
-    for method in (b.simple,b.profile,b.prompts,b.help,b.extras,b.slots,b.battle,b.tests,b.legacy):
+    for method in (b.simple,b.profile,b.prompts,b.keyword_notices,b.help,b.extras,b.slots,b.battle,b.tests,b.legacy):
         try:method()
         except (KeyError,ValueError,OSError,IndexError) as error:
             # Minimal fixtures / incomplete imports retain explicit unresolved

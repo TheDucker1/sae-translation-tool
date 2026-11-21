@@ -240,7 +240,14 @@ def field_fit(identity,value,catalog,working,font,*,reflow,hyphenate,skip=False,
             if c.get('max_units') and len(units(value))>=c['max_units']:raise ValueError(f'Text exceeds its {c["max_units"]}-unit platform metadata buffer (including terminator)')
             checks.append(dict(kind=kind,note=c.get('note','Structured metadata; no game-font box')))
         elif kind in ('keyword_template','keyword_component'):
-            raise ValueError('Keyword acquisition text needs its native notification layout; it is separate from approach choice cards')
+            from .keywordnotice import SCRIPT_ENV, environment, format_notice, pack_notice
+            layout=environment(catalog.source(SCRIPT_ENV))
+            names=c['members'] if kind=='keyword_template' else [identity]
+            template=value if kind=='keyword_template' else current(catalog,working,c['template'])
+            atlas=ChoiceAtlas(font) if getattr(font,'pair_spacing',None) else None
+            widths=[pack_notice(format_notice(template,current(catalog,working,key)),layout,font,
+                                 atlas.encode if atlas else None)[1] for key in names]
+            checks.append(dict(kind='keyword_notification',width=max(widths),variants=len(widths)))
         else:raise ValueError('Unsupported UI contract '+kind)
     return value,checks
 

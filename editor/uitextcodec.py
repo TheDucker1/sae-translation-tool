@@ -42,10 +42,8 @@ def global_text(data):
 
 
 def script_text(data):
-    r=Reader(data);r.take(3+16+34)
-    for stride in (34,4):r.take(r.count()*stride)
-    r.take(68);r.take(r.count()*8);r.take(34+20);r.string()
-    r.take(12+16+4+4)
+    from .environments import keyword_notice
+    r=Reader(data);keyword_notice(r);r.take(16+4+4)
     for _ in range(r.count()):
         r.string()
         for _ in range(r.count()):r.take(4);r.string();r.take(4)
@@ -63,8 +61,9 @@ def save_text(data):
 
 def keyword_text(data):
     r=Reader(data);r.take(3);r.take(r.count()*4)
-    for _ in range(r.count()):r.take(4);r.string()
+    entries=[(r.word('i'),r.string()) for _ in range(r.count())]
     if r.pos!=len(data):raise ValueError('Unexpected keyword table tail')
+    return entries
 
 
 def first_text(data):

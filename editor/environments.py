@@ -85,17 +85,20 @@ def approach(data):
                 result_origin=result_origin,result_width=result_width,result_scale=result_scale)
 
 
+def keyword_notice(r):
+    r.take(3+16+34)
+    table(r,34);table(r,4);r.take(68);table(r,8)
+    panel=sprite(r);r.take(20)
+    return dict(panel=panel,template=r.string(),offset=[r.word('i'),r.word('i')],scale=r.word('f'))
+
+
 def chapter(data):
-    r=Reader(data);r.take(3+16+34)
-    table(r,34);table(r,4);r.take(68);table(r,8);r.take(34+20)
-    r.string();r.take(12+16+4);duration=r.word('i')
+    r=Reader(data);keyword_notice(r);r.take(16+4);duration=r.word('i')
     if duration<0:raise ValueError('Negative chapter transition duration')
     return duration
 
 
 def chapter_text(data):
-    r=Reader(data);r.take(3+16+34)
-    table(r,34);table(r,4);r.take(68);table(r,8);r.take(34+20)
-    r.string();r.take(12)
+    r=Reader(data);keyword_notice(r)
     positions=[[r.word('i'),r.word('i')] for _ in range(2)];scale=r.word('f')
     return dict(positions=positions,scale=scale)

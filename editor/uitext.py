@@ -192,14 +192,18 @@ def stock_label(field):
     return False
 
 
-def effective_node(c,node_id,records,data=None,*,pairing=None,used_aliases=None,font=None,pack_label=None,storage_number=None):
+def effective_node(c,node_id,records,data=None,*,pairing=None,used_aliases=None,font=None,pack_label=None,storage_number=None,wire_overrides=None):
     from .fontstyle import match_style
     from .choiceart import ui_label_placement, ui_row_placement
     from .uifit import pack_rows,preserved_tip_edits,validate_tips
     n=c.nodes[node_id];edits={}
     for key,f in c.fields.items():
+        if f['node_id'] != node_id: continue
+        if wire_overrides and key in wire_overrides:
+            edits[f['index']]=wire_overrides[key]
+            continue
         storage = storage_number if key == STORAGE_SUFFIX else None
-        if f['node_id']==node_id and (key in records or storage or pack_label and stock_label(f)):
+        if key in records or storage or pack_label and stock_label(f):
             authored=key in records
             text=records[key]['text'] if authored else f['original']
             extent=None
@@ -256,7 +260,9 @@ def prepare(records,root,catalog=None,*,check_metadata=True,pairing=None,used_al
     if check_metadata:
         problems=metadata_issues(records,c)
         if problems:raise ValueError('; '.join(p['message'] for p in problems))
-    nodes={c.fields[key]['node_id'] for key in records}
+    from .keywordnotice import export_overrides
+    overrides=export_overrides(c,records,font,pack_label)
+    nodes={c.fields[key]['node_id'] for key in records.keys() | overrides.keys()}
     if storage_number:
         nodes.add(c.fields[STORAGE_SUFFIX]['node_id'])
     if pack_label:
@@ -267,7 +273,7 @@ def prepare(records,root,catalog=None,*,check_metadata=True,pairing=None,used_al
         nodes.update(n['id'] for n in c.nodes.values() if n['table'] and n['table'][2]=='profile_items')
     for node_id in sorted(nodes):
         n=c.nodes[node_id];result=effective_node(c,node_id,records,pairing=pairing,used_aliases=used_aliases,
-            font=font,pack_label=pack_label,storage_number=storage_number)
+            font=font,pack_label=pack_label,storage_number=storage_number,wire_overrides=overrides)
         if result!=n['data']:changes.setdefault(n['source'],[]).append((n['chain'],result))
     for key,record in records.items():
         f=c.fields[key];rows.append(dict(field_id=key,source=f['source'],route=f['route'],changed=record['text']!=f['original']))
