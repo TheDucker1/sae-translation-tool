@@ -37,12 +37,19 @@ class FontStyleChecks(unittest.TestCase):
         pairing = dict(pairs={'Ｔô': '龠'}, accents={'ô': '齟'}, restore={'龠': 'Ｔ', '齟': 'ô'})
         dialogue = 'Ｔôi「Ｔôｉ ＿Ｔ ｏ」'
         wire = shape_script(dialogue, 0x64, {}, 'text', formatter, pairing)
-        self.assertEqual(wire, 'Ｔôi「龠ôｉ ＿Ｔ ｏ」')
+        self.assertEqual(wire, 'Ｔôi「龠齟ｉ ＿Ｔ ｏ」')
         self.assertEqual(readable(wire, pairing), dialogue)
-        timed = 'Eriri「《SP QUE,1,2700》Ｔôｉ」'
-        self.assertEqual(shape_script(timed, 0x64, {}, 'text', formatter, pairing), timed)
-        self.assertEqual(shape_script(dialogue, 0x64, {'selector': 1}, 'text', formatter, pairing), dialogue)
+        timed = 'Eriri「Ｔôｉ！《SP QUE,1,2700》Ｔôｉ」\0ô'
+        self.assertEqual(shape_script(timed, 0x64, {}, 'text', formatter, pairing),
+                         'Eriri「Ｔ齟ｉ！《SP QUE,1,2700》Ｔ齟ｉ」\0ô')
+        self.assertEqual(shape_script(dialogue, 0x64, {'selector': 1}, 'text', formatter, pairing),
+                         'Ｔôi「Ｔ齟ｉ ＿Ｔ ｏ」')
         self.assertEqual(shape_script('Ｔô', 0x3F2, {}, 'choices[0].label', formatter, pairing), 'Ｔô')
+        self.assertEqual(shape_script('Ｔô', 0x3F2, {}, 'choices[1].label', formatter, pairing), '龠齟')
+        self.assertEqual(shape_script('Ｔô', 0x3F8, {}, 'outcomes[0].text', formatter, pairing), 'Ｔ齟')
+        ruby = 'Eriri「《RB》Ｔô《RT》ô《/RT》」'
+        self.assertEqual(shape_script(ruby, 0x64, {}, 'text', formatter, pairing),
+                         'Eriri「《RB》Ｔ齟《RT》齟《/RT》」')
         self.assertEqual(shape_profile('Ｔôｉ', pairing).encode('cp932').decode('cp932'), '龠齟ｉ')
 
     def test_approach_result_uses_proportional_latin_and_retains_breaks(self):
@@ -80,6 +87,49 @@ class FontStyleChecks(unittest.TestCase):
         font.asset_sha256 = 'fixture'
         layout = ConsumerLayout(font, dict(width=400, height=100, scale=1), ['Tươi'])
         self.assertEqual(layout.wrap(0x3F8, '％ %ls')['text'], '％ %ls')
+
+    def test_measured_startup_prompt_uses_the_same_glyphs_in_export_and_preview(self):
+        from editor.compositioncommon import plain_layer
+        from editor.uitext import effective_node, make_record
+        from editor.uitextcodec import save_text
+
+        with tempfile.TemporaryDirectory(dir=ROOT/'.local') as tmp:
+            project, _, _ = fixture(Path(tmp) / 'original')
+            catalog = get_catalog(project)
+            source = 'env/env_save_manager.dat'
+            prompt, metadata = source + ':#s45', source + ':#s0'
+            catalog.fields[prompt]['renderer'] = LAYOUT
+            catalog.fields[metadata]['renderer'] = 'metadata'
+            font = font_fixture()
+            font.pair_spacing = dict(accents={'Đ':'龠', 'ể':'齟'}, pairs={}, restore={'龠':'Đ', '齟':'ể'})
+            for canonical, alias in font.pair_spacing['accents'].items():
+                font.cached[alias] = font.cached[canonical] = (0, 0, 0, 14, 24)
+            text = 'Đａｎｇ ｋｉểｍ'
+            records = {key: make_record(catalog,key,value) for key,value in
+                       ((prompt,text), (metadata,'Đ %ls'))}
+            used = set()
+            packed = effective_node(catalog, source+':', records, pairing=font.pair_spacing,
+                                    used_aliases=used, font=font)
+            spans = counted_spans(packed, save_text)
+            self.assertEqual(spans[0].text, 'Đ %ls')
+            self.assertEqual(spans[45].text, '龠ａｎｇ ｋｉ齟ｍ')
+            self.assertEqual(used, {'龠', '齟'})
+            self.assertEqual(records[prompt]['text'], text)
+            layer, _ = plain_layer('Prompt',text,[0,0],400,1,[0,0,0,255],font)
+            self.assertEqual(layer.text, text)
+            self.assertEqual([g['code'] for g in layer.glyphs], list(map(ord,spans[45].text)))
+
+            from editor.fontpatch import STORAGE_GLYPH, relocate_storage_glyph
+            from struct import Struct
+            fmt = Struct('<4H2B')
+            amount, blank = (0, 0, 0, 64, 24), (0, 64, 0, 18, 24)
+            font.cached[chr(STORAGE_GLYPH)], font.cached[' '] = amount, blank
+            parts = [fmt.pack(STORAGE_GLYPH,*amount) + fmt.pack(ord(' '),*blank), b'']
+            relocate_storage_glyph(parts,font,'齠')
+            self.assertEqual(list(fmt.iter_unpack(parts[0])),
+                             [(STORAGE_GLYPH,*blank), (ord(' '),*blank), (ord('齠'),*amount)])
+            packed = effective_node(catalog,source+':',records,font=font,storage_number='齠')
+            self.assertEqual(counted_spans(packed,save_text)[47].text, '齠Save message 47')
 
     def test_approach_bitmap_tiles_compensate_for_native_centering(self):
         from editor.choiceart import ChoiceAtlas, measured_width

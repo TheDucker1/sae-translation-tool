@@ -8,6 +8,7 @@ import struct
 import unicodedata
 
 REVIEW_LETTERS = str.maketrans('ａｅｉｏｒｕ', 'aeioru')
+MEASURED_TEXT_OPCODES = frozenset({0x64, 0x3F2, 0x3F8})
 
 
 def reviewed_pair(left, right):
@@ -132,9 +133,11 @@ def script_enabled(opcode, args, field=''):
     return opcode == 0x3F2 and field != 'choices[0].label'
 
 
-def shape_script(text, opcode, args, field, formatter, config, *, keyword_markup=False):
-    if not config or formatter is None or not script_enabled(opcode, args, field):
-        return text
+def measured_script_field(opcode, field):
+    return opcode in MEASURED_TEXT_OPCODES and (opcode != 0x3F2 or field != 'choices[0].label')
+
+
+def _shape_script_pairs(text, opcode, formatter, config, keyword_markup):
     if not plain(text, formatter):
         marks=config.get('keyword_marks')
         if opcode==0x64 and keyword_markup and marks and '\0' not in text:
@@ -142,14 +145,47 @@ def shape_script(text, opcode, args, field, formatter, config, *, keyword_markup
             opening,closing=map(re.escape,(formatter.tokens[0][0],formatter.tokens[1][0]))
             tag,end=map(re.escape,(formatter.following[11],formatter.following[12]))
             pattern=rf'【(?={opening}{tag}\s*=\s*\d+{closing})|(?<={opening}{end}{closing})】'
-            if not re.search(pattern,text,flags=re.IGNORECASE) or formatter.ordinary(text,geometry_only=True)['markers']:
+            if not re.search(pattern,text,flags=re.IGNORECASE):
                 return text
-            return re.sub(pattern,lambda match:marks.get(match[0],match[0]),text,flags=re.IGNORECASE)
+            original=formatter.ordinary(text,geometry_only=True)
+            if original['markers']:return text
+            wire=re.sub(pattern,lambda match:marks.get(match[0],match[0]),text,flags=re.IGNORECASE)
+            shaped=formatter.ordinary(wire,geometry_only=True)
+            shaped['body']=readable(shaped['body'],config)
+            # 「【 can tell the native parser to suppress the outer dialogue quotes.
+            # Use aliases only if visible text and directive positions survive.
+            return wire if shaped==original else text
         return text
     quote = text.find(formatter.following[1]) if opcode == 0x64 else -1
     if quote > 0:
         return text[:quote] + narrow(text[quote:], config)
     return narrow(text, config)
+
+
+def shape_script(text, opcode, args, field, formatter, config, *, keyword_markup=False):
+    if not config or formatter is None or not measured_script_field(opcode, field):
+        return text
+    if script_enabled(opcode, args, field):
+        text = _shape_script_pairs(text, opcode, formatter, config, keyword_markup)
+    speaker_end = text.partition('\0')[0].find(formatter.following[1]) if opcode == 0x64 else 0
+    body_start = max(0, speaker_end)
+    return text[:body_start] + shape_measured(text[body_start:], formatter, config)
+
+
+def shape_measured(text, formatter, config):
+    # Native per-glyph layout measures through the narrow Shift-JIS view but
+    # draws from the wide view. Use identical glyphs in slots both views retain.
+    accents = (config or {}).get('accents')
+    if not accents:
+        return text
+    visible, separator, suffix = text.partition('\0')
+    if accents.keys().isdisjoint(visible):
+        return text
+    opening, closing = map(re.escape, (formatter.tokens[0][0], formatter.tokens[1][0]))
+    parts = re.split(rf'({opening}.*?{closing}|≪[^≫]*≫)', visible, flags=re.DOTALL)
+    table = str.maketrans(accents)
+    parts[::2] = [part.translate(table) for part in parts[::2]]
+    return ''.join(parts) + separator + suffix
 
 
 def shape_profile(text, config):

@@ -23,6 +23,22 @@ def storage_glyph(raw,font):
         width=dialogue_width(x-1,font,1),runs=runs,fixed=False)
 
 
+def relocate_storage_glyph(parts, font, alias):
+    """Move the constant amount to an encodable slot; leave the native append blank."""
+    amount = font.cached[chr(STORAGE_GLYPH)]
+    blank = font.cached[' ']
+    record = struct.Struct('<4H2B')
+    records = bytearray(parts[-2])
+    for offset in range(0, len(records), record.size):
+        if record.unpack_from(records, offset)[0] == STORAGE_GLYPH:
+            record.pack_into(records, offset, STORAGE_GLYPH, *blank)
+            break
+    else:
+        raise ValueError('Missing native storage glyph in font cache')
+    records.extend(record.pack(ord(alias), *amount))
+    parts[-2] = bytes(records)
+
+
 def dialogue_width(ink_width,font,gap):
     """Record width whose native advance clears drawn ink by the requested gap."""
     pixels=int(font.utility*font.scale)

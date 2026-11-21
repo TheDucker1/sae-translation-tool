@@ -5,7 +5,7 @@ from .composition import Composition, Layer, sprite, blit, text_layer
 from .imagecodec import ImageError
 from .scriptcodec import Reader
 from .text import color, glyph_draw_width, units, unicode_text
-from .pairspacing import readable
+from .pairspacing import readable,shape_measured
 from .textlayout import script_font_text
 from . import environments
 
@@ -24,6 +24,8 @@ def plain_layer(name, value, origin, width, scale, rgba, font, *, font_tags=Fals
     """Reuse the Python line formatter with native line-height and glyph-cell drawing."""
     if font is None: raise ImageError('Load original font/layout data before composing text')
     value = value.replace('\r\n', '\n').replace('\n', font.format.break_char)
+    if glyphs is None:
+        value = shape_measured(value, font.format, getattr(font, 'pair_spacing', None))
     text, ranges = font.format.prepare(value, font_tags=font_tags)
     if glyphs is None:glyphs = font.layout(text, width, scale)
     size = int(font.utility * scale)

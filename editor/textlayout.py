@@ -7,7 +7,7 @@ from .engine import TEXT_OPS, text_fields
 from .scriptcodec import put
 from .text import fixed_extent, units, unicode_text
 from .textregions import region_area
-from .pairspacing import shape_script
+from .pairspacing import MEASURED_TEXT_OPCODES, measured_script_field, shape_script
 
 
 def field_path(name):return tuple(int(x) if x.isdecimal() else x for x in name.replace('[','.').replace(']','').split('.'))
@@ -49,7 +49,7 @@ def reflow_breaks(value,formatter,*,collapse_padding=False):
     return ''.join(parts)
 
 
-def supports_breaks(opcode):return opcode in {0x64,0x3f2,0x3f8}
+def supports_breaks(opcode):return opcode in MEASURED_TEXT_OPCODES
 
 
 def native_field(opcode,value,formatter):
@@ -105,10 +105,6 @@ def full_width_text(value,font,*,controls=True,preserve_speaker=False,preserve_f
         if c in '“”':double_open=c=='“'
         result.append(c);previous=c;i+=1
     return dict(text=''.join(result),converted_characters=converted,preserved_ascii=''.join(sorted(preserved)))
-
-
-def measured_script_field(opcode, field):
-    return supports_breaks(opcode) and (opcode != 0x3F2 or field != 'choices[0].label')
 
 
 def script_font_text(font, value, opcode, args, field, *, authored):

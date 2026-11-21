@@ -106,11 +106,12 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     if any(stamp(root/name)!=value for name,value in source_stamps.items()):raise ExportError('Source changed while preparing export')
     first=Archive(first_bytes);resource=Archive(resource_bytes);scripts=nested(resource,4)
     if set(project.scripts)!=set(range(len(scripts.entries))):raise ExportError('Project/source script registry differs')
-    from .pairspacing import config_for, remove_unused_font_records, shape_script
+    from .pairspacing import carrier_codes, config_for, remove_unused_font_records, shape_script
     pairing = config_for(project.font_asset)
     reserved = set(pairing['restore']) if pairing else set()
     used_aliases = set()
     choice_atlas = None
+    storage_number = None
     approach_wires = set()
     choice_wires = set()
     font_face = None
@@ -126,9 +127,10 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
         source_stamps.update({name: stamp(root/name) for name in settings_sources})
         font_face = effective_font(project, TextPresentation(root))
     if pairing:
-        from .choiceart import END_CARRIER, FIRST_CARRIER, ChoiceAtlas, approach_metrics
+        from .choiceart import ChoiceAtlas, approach_metrics
         from .engine import text_fields
-        from .uitext import get_catalog
+        from .fontpatch import STORAGE_GLYPH
+        from .uitext import STORAGE_SUFFIX, get_catalog
 
         if authored_choices:
             source_stamps.update({name: stamp(root/name) for name in ('env/env_approach.dat', 'env/env_script_select.dat')})
@@ -145,13 +147,21 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
                 source_stamps[battle_file]=stamp(root/battle_file)
                 versus=battle((root/battle_file).read_bytes())
         unavailable = {char for s in project.scripts.values() for c in s.commands
-                       for _, text in text_fields(dict(opcode=c.opcode, args=c.args)) for char in text
-                       if FIRST_CARRIER <= ord(char) < END_CARRIER}
+                       for _, text in text_fields(dict(opcode=c.opcode, args=c.args)) for char in text}
         ui = get_catalog(project)
         unavailable.update(char for key, row in ui.fields.items()
-                           for char in project.ui_text_assets.get(key, {}).get('text', row['original'])
-                           if FIRST_CARRIER <= ord(char) < END_CARRIER)
+                           for char in project.ui_text_assets.get(key, {}).get('text', row['original']))
         choice_atlas = ChoiceAtlas(font_face, unavailable)
+        if STORAGE_SUFFIX in ui.fields and chr(STORAGE_GLYPH) in font_face.cached:
+            fmt = font_face.format
+            unavailable.update(font_face.cached)
+            unavailable.update(font_face.charset)
+            unavailable.update(fmt.mapping)
+            unavailable.update(fmt.mapping.values())
+            unavailable.update(''.join(fmt.tokens + fmt.following))
+            storage_number = next(carrier_codes(unavailable), None)
+            if storage_number is None:
+                raise ExportError('No free Shift-JIS glyph slot for the native storage amount')
 
     def wire_text(opcode, args, field, value, authored):
         if not reserved.isdisjoint(value):
@@ -199,12 +209,15 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     report['changed_textures']=sum(row['changed'] for row in texture_rows)
     try:ui_changes,ui_rows,ui_catalog=prepare_ui_text(getattr(project,'ui_text_assets',{}),root,
                                                      pairing=pairing,used_aliases=used_aliases,font=font_face,
-                                                     pack_label=choice_atlas.encode if choice_atlas else None)
+                                                     pack_label=choice_atlas.encode if choice_atlas else None,
+                                                     storage_number=storage_number)
     except ValueError as error:raise ExportError('UI text export validation failed: '+str(error)) from error
     if pairing:
-        from .fontpatch import pack, sections
+        from .fontpatch import pack, relocate_storage_glyph, sections
         parts = sections(font)
         remove_unused_font_records(parts, pairing, used_aliases)
+        if storage_number:
+            relocate_storage_glyph(parts, font_face, storage_number)
         if choice_atlas and choice_atlas.glyphs:
             choice_atlas.append_to(parts)
             report['font_asset']['packed_labels'] = dict(unique_labels=len(choice_atlas.labels), generated_glyphs=len(choice_atlas.glyphs))

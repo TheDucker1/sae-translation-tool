@@ -3,6 +3,7 @@ from copy import copy
 import math,re
 from .text import fixed_extent,units,unicode_text
 from .textlayout import TextLayoutService,native_newlines
+from .pairspacing import shape_measured,shape_profile
 from .uitextcodec import PRINTF
 from .uifit import fit_profile_tip,profile_context,row_metrics,tip_geometry,wrap_tip
 from .uipanel import fit_panel
@@ -50,10 +51,15 @@ class ConsumerLayout(TextLayoutService):
         return dict(text=value,line_count=len(widths),line_widths=widths,width=c['width'])
 
     def wire_text(self, opcode, source, field):
+        pairing = getattr(self.font, 'pair_spacing', None)
         if self.contract.get('profile_response'):
-            from .pairspacing import shape_profile
-            return shape_profile(source, getattr(self.font, 'pair_spacing', None))
-        return source
+            return shape_profile(source, pairing)
+        return shape_measured(source, self.font.format, pairing)
+
+    def display_body(self, opcode, source, body, field):
+        if self.arguments is not None:
+            source, _ = substitute(source, self.arguments)
+        return super().display_body(opcode, source, body, field)
 
     def check_box(self,opcode,field,line_count,spec):
         c=self.contract;leading=int(self.font.height*c['scale']+self.font.leading);size=int(self.font.utility*c['scale'])

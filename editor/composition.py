@@ -6,6 +6,7 @@ import math
 import struct
 from .imageassets import stamp
 from .imagecodec import ImageError
+from .pairspacing import readable
 from .scriptcodec import Reader
 from .text import color, cursor_advance, glyph_draw_width, units
 
@@ -104,6 +105,7 @@ def text_layer(name, text, position, size, rgba, font, *, center=False):
     extent = max((g['rect'][0] + g['rect'][2] - x for g in glyphs), default=cursor - x)
     height = max((g['rect'][3] for g in glyphs), default=size)
     logical=getattr(font,'packed_text',{}).get(text,text)
+    logical=readable(logical,getattr(font,'pair_spacing',None))
     packer=getattr(font,'approach_labels',None)
     packed=packer.geometry.get(text) if packer else None
     if packed:
