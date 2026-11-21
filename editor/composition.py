@@ -116,14 +116,16 @@ def text_layer(name, text, position, size, rgba, font, *, center=False):
 
 class EnvironmentLibrary:
     """Small immutable environment snapshots; changes require an explicit refresh."""
-    def __init__(self, root, *, catalog=None, ui_text_assets=None, ui_text_catalog=None, pairing=None, font=None):
+    def __init__(self, root, *, catalog=None, ui_text_assets=None, ui_text_catalog=None, pairing=None, font=None,battle_badges=None):
         self.root = root; self.files = {}; self.decoded = {}; self.catalog = catalog
         self.members = {}; self.member_sources = {}
         self.ui_text_assets=dict(ui_text_assets or {});self.ui_text_catalog=ui_text_catalog;self.pairing=pairing;self.font=font
+        self.battle_badges=battle_badges
 
     def effective(self,source,route,data):
-        from .uitext import STOCK_LABEL_SOURCES,build_catalog,effective_node
-        if not self.ui_text_assets and not (self.pairing and source in STOCK_LABEL_SOURCES):return data
+        from .uitext import NUMERIC_FORMAT_SOURCES,STOCK_LABEL_SOURCES,build_catalog,effective_node
+        if (not self.ui_text_assets and not (self.pairing and source in STOCK_LABEL_SOURCES)
+                and not (getattr(self.font,'asset_sha256',None) and source in NUMERIC_FORMAT_SOURCES)):return data
         if self.ui_text_catalog is None:self.ui_text_catalog=build_catalog(self.root)
         from .choiceart import preview_label
         identity=source+':'+('/'.join(map(str,route)))
@@ -148,6 +150,9 @@ class EnvironmentLibrary:
             data = path.read_bytes()
             if stamp(path) != before: raise ImageError('Layout changed while reading; refresh compositions')
             data=self.effective(relative,(),data)
+            if self.battle_badges:
+                from .battlebadges import SOURCE,patch_environment
+                if relative==SOURCE:data=patch_environment(data,self.battle_badges)
             self.files[relative] = (before, data, hashlib.sha256(data).hexdigest())
         self.verify()
         return self.files[relative][1]
@@ -332,26 +337,25 @@ def message_layout(e, state, font):
         for i, shape in enumerate(e['cursors']):
             out.layers.append(blit(f'Advance cursor {i}', 1, 2, shape, offset=(0, slide), alpha=alpha))
     if font is not None and state.get('text'):
-        from .compositioncommon import dialogue_annotations
-        from .pairspacing import readable
+        from .compositioncommon import add_shadow, dialogue_annotations
         from .textlayout import native_newlines, script_font_text
         pairing=getattr(font,'pair_spacing',None)
         sample = native_newlines(state['text'], font.format)
-        wire = script_font_text(font, sample, 0x64, {}, 'text', authored=True)
+        wire = script_font_text(font, sample, 0x64, {}, 'text', authored=state.get('font_authored',True))
         parsed = font.format.ordinary(wire, geometry_only=True)
         size = int(font.utility * font.scale)
         glyphs = font.layout(parsed['body'], e['width'], font.scale, ruby=parsed['ruby'])
         origin = [e['text_position'][0], e['text_position'][1] + slide]
+        was_read = state.get('read_color', False)
         body = Layer('Dialogue text', kind='text', text=readable(parsed['body'], pairing), size=size,
-            destination=[*origin, e['width'], max((g['y'] for g in glyphs), default=0) + size], rgba=font.unread[:])
+            destination=[*origin, e['width'], max((g['y'] for g in glyphs), default=0) + size],
+            rgba=(font.read if was_read else font.unread)[:])
         body.glyphs = [dict(code=g['code'], rect=[origin[0] + g['x'], origin[1] + g['y'],
                        glyph_draw_width(font,chr(g['code']),size),size]) for g in glyphs]
-        # Fully revealed ordinary text is the preview state. Native body shadow is
-        # a separate offset pass; name text is not duplicated as a body shadow.
-        shadow = deepcopy(body); shadow.name = 'Dialogue shadow'; shadow.rgba = [0, 0, 0, 255]
-        for g in shadow.glyphs: g['rect'][0] += 1; g['rect'][1] += 1
-        out.layers.extend([shadow, body])
-        dialogue_annotations(out,font,body,glyphs,parsed,origin,font.scale)
+        # The native draw adds a shadow only for previously read messages.
+        if was_read:add_shadow(out,body)
+        else:out.layers.append(body)
+        dialogue_annotations(out,font,body,glyphs,parsed,origin,font.scale,shadow=was_read)
         if parsed['name']:
             name_size = int(font.utility * font.name_scale)
             x, y = font.name_origin

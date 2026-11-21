@@ -11,7 +11,6 @@ from .packing import payload,member,pack_members,repack
 from .seekwriter import relocate
 from .imageassets import stamp
 from .imagecodec import ImageError, ImageCancelled
-from .engine import TEXT_OPS
 from .textlayout import field_path, script_font_text
 from .textureexport import prepare_textures, patch_tree, changed_paths
 from .uitext import prepare as prepare_ui_text
@@ -118,7 +117,7 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     authored_ops = {c.opcode for s in project.scripts.values() for c in s.commands if c.authored} if project.font_asset else set()
     authored_choices = pairing and bool({0x65, 0x3F6} & authored_ops)
     authored_captions = pairing and bool({0x3EC, 0x3F9} & authored_ops)
-    if pairing or (TEXT_OPS & authored_ops) or (project.font_asset and project.ui_text_assets):
+    if project.font_asset and (pairing or project.text_format is not None):
         from .fontpatch import effective_font
         from .text import TextPresentation
 
@@ -287,6 +286,13 @@ def prepare_archives(project,source=None,progress=None,cancelled=None):
     except ImageCancelled as error:raise ExportCancelled(str(error)) from error
     except ImageError as error:raise ExportError('Texture container export failed: '+str(error)) from error
     first_changes={}
+    if getattr(project,'battle_badges',None):
+        from .battlebadges import SOURCE,patch_environment,validate
+        source_stamps.setdefault(SOURCE,stamp(root/SOURCE))
+        validate(root,project.battle_badges,project.texture_assets)
+        files[SOURCE]=patch_environment(files[SOURCE] if SOURCE in files else (root/SOURCE).read_bytes(),project.battle_badges)
+        report['source_hashes'][SOURCE]=project.battle_badges['source_sha256']
+        report['battle_result_badges']=project.battle_badges['labels']
     if files['resource.dat']!=resource_bytes:
         checkpoint(progress,cancelled,'Relocating seek-map offsets, sizes and content checksums…')
         seek,visited=relocate(first.read(5,gzip=True),resource_bytes,files['resource.dat'],paths)

@@ -247,7 +247,7 @@ class Contracts:
             text(e.strings[0xd848],point,0xd788,view='music')
             if isinstance(e.strings[0xd848],FieldText):
                 longest=max((row['duration'] for row in e.music),default=0)
-                self.bound[e.strings[0xd848].field_id][-1].update(format_samples=[[longest//60,59],[e.signed(0xd844),e.signed(0xd844)]],normalize_numbers=True)
+                self.bound[e.strings[0xd848].field_id][-1].update(format_samples=[[longest//60,59],[e.signed(0xd844),e.signed(0xd844)]],normalize_numbers=True,format_capacity=64)
         for i,row in enumerate(e.movies):text(row[1],0xda78,0xda80,align='center',view='movies',state=dict(selected=i))
         text(e.strings[0xd89c],0xda78,0xda80,align='center',view='movies',state=dict(unlocked=False))
         clip=e.rect[0xdbe4]
@@ -283,7 +283,7 @@ class Contracts:
                 (0x4d8,0x2a8,0x2b0,[[99,99]]),(0x510,0x2a8,0x2b0,None)):
             p=e.point[point];limit=min([right]+[x+e.point[other][0] for other in (0x294,0x29c,0x2a8) if e.point[other][1]==p[1] and e.point[other][0]>p[0]])
             self.fixed(e.strings[key],[x+p[0],p[1]],e.floating(scale),max(0,clip[0]),limit,
-                format_samples=samples,normalize_numbers=bool(samples),scene=dict(family='slots',state={}))
+                format_samples=samples,normalize_numbers=bool(samples),round_size=True,scene=dict(family='slots',state={}))
         self.bind(e.strings[0x580],'truncation_suffix',scale=e.floating(0x2bc),max_units=e.signed(0x2c0),
             note='Appended after the native truncated save title; keep concise')
         self.bind(e.strings[0x548],'save_metadata',renderer='metadata')

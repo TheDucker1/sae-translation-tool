@@ -157,10 +157,10 @@ class GuiWorkspace(TranslationWorkspace):
             uid=changed[0]['command_id'] if changed else None
             if sid not in self.project.scripts:sid=min(self.project.scripts)
             if self.project.scenario_key()==scenario:w.textures_edited(revision)
-            else:w.edited(sid,uid,known_valid=name in {'apply_translations','apply_text_cleanup','edit_commands','load_project'})
+            else:w.edited(sid,uid,known_valid=name in {'apply_translations','apply_speaker_repairs','apply_text_cleanup','edit_commands','load_project'})
             self._cache={}
             w.statusBar().showMessage('Agent '+name+' applied to the live project; shared Undo is available.')
-        elif name.startswith('preview_') and name!='preview_view':
+        elif name in PREVIEW_WRITES and name.startswith('preview_'):
             if name=='preview_start':w.routes=RouteBook();w.rewind_points=[0]
             w.target=None;w.seek_origin=None;w.cancel_seek.hide();w.preview_revision=self.project.revision
             w.state_origin='Shared MCP scenario';w.update_view(w.session.call('view'))

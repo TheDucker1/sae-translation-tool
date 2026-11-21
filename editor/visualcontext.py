@@ -135,7 +135,7 @@ class VisualContext:
             asset=getattr(workspace.project,'font_asset',None)
             font=self.font(workspace)[0] if asset else None
             self.library=EnvironmentLibrary(root,catalog=self.catalog,ui_text_assets=ui,ui_text_catalog=get_catalog(workspace.project) if ui else None,
-                                            pairing=config_for(asset),font=font)
+                                            pairing=config_for(asset),font=font,battle_badges=getattr(workspace.project,'battle_badges',None))
         replacements = dict(getattr(workspace.project, 'texture_assets', {}))
         replacement_key = fingerprint({key: value['png_sha256'] for key, value in replacements.items()})
         if self.replacement_key != (self.source_key, replacement_key):

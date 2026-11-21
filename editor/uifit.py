@@ -3,6 +3,7 @@ from functools import lru_cache
 import re
 from unicodedata import name
 from .text import fixed_extent,units,unicode_text
+from .wrapwords import can_mechanically_hyphenate
 
 
 TIP_COLUMNS='Profile tips column limit'
@@ -54,6 +55,8 @@ def wrap_tip(text,separator,columns,width,size,*,reflow=False,hyphenate=True,max
             if fits(candidate):line=candidate;continue
             if line:rows.append(line);line=''
             while not fits(word):
+                if not can_mechanically_hyphenate(word):
+                    raise ValueError('An accented word exceeds the row. Shorten it or choose an intentional break.')
                 if not hyphenate:raise ValueError('Profile tips word exceeds a row; enable mechanical hyphens or shorten it')
                 cut=0
                 for i in range(1,len(word)):

@@ -34,7 +34,10 @@ def controls(family):
     if family == 'message':
         add('speaker', 'Speaker plate ID (-1 hides it)', 'int', 0, -1, 8)
         for name in ('skip', 'skip_gesture', 'auto'): add(name, name.replace('_', ' ').title() + ' active', 'bool', False)
-    if family in ('message', 'battle'): add('opacity', 'Window opacity', 'int', 11, 0, 11)
+    if family in ('message', 'battle'):
+        add('opacity', 'Window opacity', 'int', 11, 0, 11)
+        add('read_color', 'Previously read dialogue', 'bool', False)
+        add('font_authored', 'Apply translated text aliases', 'bool', True)
     if family in ('message', 'profile'): add('cursor', 'Advance cursor', 'bool', True)
     if family in ('system', 'calendar'): add('chapter', 'Chapter palette', 'int', 0, -1 if family == 'system' else 0, 999)
     defaults = dict(message='', system='Chapter preview', choices='Choice 1\nChoice 2', calendar='Chapter preview\nSubtitle preview',

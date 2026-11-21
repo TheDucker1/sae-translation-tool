@@ -1,11 +1,13 @@
 """Read-only save/load and backlog list consumers; no personal saves are accessed."""
 from copy import deepcopy
-import re
+import math
 from .composition import Composition, Layer, Fields, blit, sprite, text_layer
 from .compositioncommon import cached, quad, plain_layer, add_shadow
 from .imagecodec import ImageError
 from .scriptcodec import Reader
-from .text import color, units, unicode_text
+from .pairspacing import narrow, readable
+from .text import color, glyph_draw_width, units, unicode_text
+from .uitextcodec import format_ui_numbers
 
 
 def slot_environment(data):
@@ -98,18 +100,64 @@ def new_marker(out, library, position, scale=10):
         out.layers.append(layer)
 
 
-def slot_format(pattern, values):
-    directives = re.findall(r'%(?:0?[0-9]{0,3}d|%)', pattern)
-    if len(re.findall('%', pattern)) != sum(2 if d == '%%' else 1 for d in directives):
-        raise ImageError('Unsupported numeric format in slot environment')
-    try: text = pattern % tuple(values)
-    except (TypeError, ValueError, OverflowError) as error: raise ImageError(str(error)) from error
-    if len(text) >= 128: raise ImageError('Slot numeric text exceeds native format buffer')
-    return text.translate(str.maketrans('0123456789 ', '０１２３４５６７８９　'))
+REVIEW_LATIN = str.maketrans({**{c: c - 0xfee0 for c in range(0xff01, 0xff5f)}, 0x3000: ' '})
+
+
+def slot_review_line(name, value, position, size, rgba, font, *, right=None, center=False):
+    """Set a single proportional reference line in the original card geometry."""
+    from .choiceart import preview_label
+    pairing = getattr(font, 'pair_spacing', None)
+    value = readable(value, pairing).replace(font.format.break_char, ' ').translate(REVIEW_LATIN)
+    value = ' '.join(value.partition('\0')[0].split())
+
+    def packed_line(value):
+        wire, width = preview_label(font, value, size, align='center' if center else 'left', allow_numbers=True)
+        if width is None or (right is not None and width > right - position[0]): return None
+        origin = list(position)
+        if center: origin[0] -= font.measure(units(wire), size) // 2
+        return text_layer(name, wire, origin, size, rgba, font)
+
+    if layer := packed_line(value): return layer
+    chars = units(value)
+    # Fullwidth aliases in the patched atlas contain the designed Latin masks.
+    # Keep ASCII when the active font does not supply a patched bitmap for it.
+    shaped = narrow(''.join(chr(ord(c) + 0xfee0) if '!' <= c <= '~'
+                            and chr(ord(c) + 0xfee0) in font.cached else c for c in chars), pairing)
+
+    def dimensions(char):
+        width = glyph_draw_width(font, char, size)
+        return width, max(width if not char.isspace() else 0, font.measure(char, size), 1)
+
+    widths = [dimensions(char) for char in shaped]
+    x, y = position
+    if right is not None and sum(advance for _, advance in widths) > right - x:
+        ellipsis = '…'
+        end_width = dimensions(ellipsis)
+        remain = right - x - end_width[1]
+        if remain < 0: return Layer(name, kind='text', destination=[x, y, 0, size], rgba=rgba, size=size)
+        end = 0
+        for _, advance in widths:
+            if advance > remain: break
+            remain -= advance; end += 1
+        word_end = chars.rfind(' ', 0, end + 1)
+        if word_end > 0: end = word_end
+        if end < len(chars) and '\udc00' <= chars[end] <= '\udfff': end -= 1
+        chars, shaped, widths = chars[:end] + ellipsis, shaped[:end] + ellipsis, widths[:end] + [end_width]
+        if layer := packed_line(unicode_text(chars)): return layer
+
+    extent = sum(advance for _, advance in widths)
+    if center: x -= extent // 2
+    cursor = x
+    layer = Layer(name, kind='text', text=unicode_text(chars), destination=[x, y, extent, size], rgba=rgba, size=size)
+    for char, (width, advance) in zip(shaped, widths):
+        if not char.isspace(): layer.glyphs.append(dict(code=ord(char), rect=[cursor, y, width, size]))
+        cursor += advance
+    return layer
 
 
 def slot_cards(out, e, library, font, state, first, selected, shift):
     mode, alpha = state.get('mode', 1), state.get('highlight', 255)
+    review = state.get('spacing_review', False)
     pitch = e.sprite[0x168]['h'] + e.signed(0x164)
     start = len(out.layers)
     clip = e.rect[0x148]
@@ -134,24 +182,69 @@ def slot_cards(out, e, library, font, state, first, selected, shift):
                                        [x + s['x'], y + s['y'], s['w'], s['h']]))
             values = ((0x468, (2026, 11, 5), 0x294, 0x2a4), (0x4a0, (12, 34), 0x29c, 0x2a4),
                       (0x4d8, (9, 1), 0x2a8, 0x2b0))
+            card_right = x + e.sprite[0x1d4]['x'] + e.sprite[0x1d4]['w']
+            text_right = {0x468: x + e.point[0x29c][0], 0x4a0: card_right, 0x4d8: x + e.point[0x2b4][0]}
             for field, args, point, scale in values:
-                value = slot_format(e.strings[field], args); px, py = e.point[point]
-                out.layers.append(text_layer(f'Slot {row + 1} sample metadata {field:X}', value,
-                    [x + px, y + py], int(font.utility * e.floating(scale)), [0, 0, 0, 255], font))
-            texts = state.get('text', '').splitlines()
-            title = texts[0] if texts else 'Preview chapter'; maximum = e.signed(0x2c0)
-            if maximum <= 0: raise ImageError('Invalid slot title capacity')
-            if len(units(title)) > maximum: title = unicode_text(units(title)[:maximum - 1]) + e.strings[0x580]
+                value = format_ui_numbers(e.strings[field], args); px, py = e.point[point]
+                name = f'Slot {row + 1} sample metadata {field:X}'
+                position, size = [x + px, y + py], math.floor(font.utility * e.floating(scale) + .5)
+                packed=getattr(font,'packed_text',{})
+                prefix=max((wire for wire in packed if value.startswith(wire)),key=len,default='')
+                logical = packed[prefix] + value[len(prefix):] if prefix else value
+                if review:
+                    layer = slot_review_line(name, logical, position, size, [0, 0, 0, 255], font,
+                                             right=text_right[field] - 4)
+                else:
+                    layer = text_layer(name, value, position, size, [0, 0, 0, 255], font)
+                    layer.text = logical
+                out.layers.append(layer)
+            title,_,dialogue=state.get('text','').partition('\n')
+            title=title or 'Preview chapter';dialogue=dialogue or 'Preview dialogue'
+            packed_title = False
+            if state.get('script_sample',False):
+                from .choiceart import preview_label
+                from .compositioncommon import calendar_environment
+                from .textlayout import script_font_text
+                chapter=cached(library,'calendar','env/env_script.dat',calendar_environment)
+                title=script_font_text(font,title,0x3ec,{},'texts[1]',authored=True)
+                title, packed_width = preview_label(font,title,int(font.utility*chapter['chapter']['scale']),align='left')
+                packed_title = packed_width is not None
+                wire=script_font_text(font,dialogue,0x64,{},'text',authored=True)
+                parsed=font.format.ordinary(wire,geometry_only=True)
+                if review:
+                    dialogue = parsed['name'] + parsed['body']
+                else:
+                    glyphs=font.layout(parsed['body'],1000,e.floating(0x2cc),ruby=parsed['ruby'])
+                    units_text=parsed['name']+''.join(chr(glyph['code']) for glyph in glyphs)
+                    capacity=e.signed(0x2d0)
+                    if capacity<=0:raise ImageError('Invalid slot dialogue capacity')
+                    if len(units_text)>capacity:units_text=units_text[:capacity-1]+units(e.strings[0x580])
+                    dialogue=unicode_text(units_text)
+            if not review or packed_title:
+                maximum = e.signed(0x2c0)
+                if maximum <= 0: raise ImageError('Invalid slot title capacity')
+                if len(units(title)) > maximum: title = unicode_text(units(title)[:maximum - 1]) + e.strings[0x580]
             for value, point, scale, label in ((title, 0x2b4, 0x2bc, 'chapter'),
-                    (texts[1] if len(texts) > 1 else 'Preview dialogue', 0x2c4, 0x2cc, 'dialogue')):
+                    (dialogue, 0x2c4, 0x2cc, 'dialogue')):
                 px, py = e.point[point]
-                out.layers.append(text_layer(f'Slot sample {label}', value, [x + px, y + py],
-                    int(font.utility * e.floating(scale)), [0, 0, 0, 255], font))
+                name = f'Slot sample {label}'
+                position, size = [x + px, y + py], math.floor(font.utility * e.floating(scale) + .5)
+                if review and (label == 'dialogue' or not packed_title):
+                    end = x + e.sprite[0x2d4]['x'] if label == 'dialogue' else card_right
+                    layer = slot_review_line(name, value, position, size, [0, 0, 0, 255], font, right=end - 4)
+                else:
+                    layer = text_layer(name, value, position, size, [0, 0, 0, 255], font)
+                    layer.text = readable(layer.text, getattr(font, 'pair_spacing', None))
+                out.layers.append(layer)
         card(70, 0x240, e.color[0x418 if focused else 0x41c])
-        number = slot_format('%02d', (row + 1,)); size = int(font.utility * e.floating(0x290)); px, py = e.point[0x288]
-        out.layers.append(text_layer(f'Slot number {row + 1}', number,
-            [x + px - font.measure(units(number), size) // 2, y + py - size // 2], size,
-            [0, 0, 0, 255] if focused else [255] * 4, font))
+        number = format_ui_numbers('%02d', (row + 1,))
+        size = math.floor(font.utility * e.floating(0x290) + .5); px, py = e.point[0x288]
+        name = f'Slot number {row + 1}'
+        rgba = [0, 0, 0, 255] if focused else [255] * 4
+        if review:
+            out.layers.append(slot_review_line(name, number, [x + px, y + py - size // 2], size, rgba, font, center=True))
+        else:
+            out.layers.append(text_layer(name, number, [x + px - font.measure(units(number), size) // 2, y + py - size // 2], size, rgba, font))
         if occupied and state.get('new', True):
             s = e.sprite[0x264]; new_marker(out, library, [x + s['x'], y + s['y']], state.get('marker_scale', 10))
         tint = [255, 255, 255, 255 if occupied and state.get('locked', False) else 128]
@@ -168,8 +261,11 @@ def slots_layout(library, state, font):
     if first == -1: first = min(56, selected // 4 * 4)
     if not 0 <= first <= 56: raise ImageError('First visible slot must be0–56')
     shift = int(e.point[0x158][1] * state.get('scroll', 0) / 100)
-    out = Composition('Save / load', notes=['Preview records only: selected row may be occupied, other rows empty. Personal saves are never read.',
-        'Sample dates, chapter/dialogue and optional backdrop thumbnail are preview content. No save/load/protection action is executed.',
+    review = state.get('spacing_review', False)
+    out = Composition('Save / load · spacing review' if review else 'Save / load', notes=[
+        'Spacing review uses proportional glyph advances and fits the full source dialogue to one line. It is an editor reference and does not affect game export.' if review
+        else 'Game layout uses the fixed cursor and native saved-dialogue length. Authored chapter and date prefix use their packed glyphs when available.',
+        'The selected row contains sample data. Personal saves are never read.',
         'Scroll and marker scale are static channel samples, not controller animation playback.'])
     out.layers.append(Layer('Save/load shade', kind='solid', destination=[0, 0, 960, 544], rgba=[0, 0, 0, 128 if mode == 0 else 200]))
     add = lambda key, bank, entry, **kw: backdrop_sprite(out, e, key, bank, entry, **kw)
@@ -283,6 +379,8 @@ def backlog_layout(library, state, font):
 ADAPTERS = {'slots': slots_layout, 'backlog': backlog_layout}
 PARAMETERS = {
     'slots': [('mode', 'Screen mode', 'enum', 1, [(0, 'Save'), (1, 'Load')]),
+              ('script_sample','Sample from script text','bool',False),
+              ('spacing_review','Proportional spacing review (editor only)','bool',False),
               ('first', 'First row (-1 automatic)', 'int', -1, -1, 56),
               ('scroll', 'Scroll channel %', 'int', 0, 0, 100), ('highlight', 'Highlight alpha', 'int', 255, 0, 255),
               ('occupied', 'Selected slot occupied', 'bool', True), ('locked', 'Selected slot protected', 'bool', False),

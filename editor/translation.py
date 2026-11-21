@@ -24,7 +24,7 @@ from .dialogueview import project_flow,transcript,readable
 from .textlayout import TextLayoutService,native_field,supports_breaks
 from .fontpatch import WORD_SPACE_WIDTHS,effective_font
 from .pairspacing import public_pair_spacing
-from .mcp_models import UiTextEdit
+from .mcp_models import SpeakerEdit,UiTextEdit
 
 GUIDE=(ROOT/'docs/TRANSLATOR_GUIDE.md').read_text(encoding='utf-8')
 
@@ -345,6 +345,39 @@ class TranslationWorkspace:
                     coordinates=COORDINATES,limitations=LIMITATIONS)
 
     @locked
+    def list_preview_screens(self)->dict[str,Any]:
+        """List curated major windows with the current project's representative preview states."""
+        from .previewgallery import screen_presets
+        return dict(project_revision=self.project.revision,screens=list(screen_presets(self.project)))
+
+    @locked
+    def get_preview_screen(self,screen_id:Id,expected_revision:Id|None=None,include_image:bool=True)->dict[str,Any]:
+        """Render one gallery screen as a native MCP image block with scene geometry."""
+        from .previewgallery import get_screen,screen_presets
+        if expected_revision is not None:self.check_revision(expected_revision)
+        for preset in screen_presets(self.project):
+            if preset['screen_id']==screen_id:return get_screen(self.visual_context(),self,preset,include_image)
+        raise ValueError('Unknown screen ID; call list_preview_screens')
+
+    @locked
+    def export_preview_gallery(self,folder:Annotated[str,Field(min_length=1,max_length=240)],expected_revision:Id)->dict[str,Any]:
+        """Write a scrollable HTML gallery, original-size PNGs and a scene manifest into a new workspace folder."""
+        from .previewgallery import export_gallery
+        self.check_revision(expected_revision)
+        return export_gallery(self.visual_context(),self,self.path(folder))
+
+    @locked
+    def set_battle_result_badges(self,expected_revision:Id,enabled:bool=True,
+                                  draw:Annotated[str,Field(min_length=1,max_length=24)]='HÒA',
+                                  loss:Annotated[str,Field(min_length=1,max_length=24)]='THUA',
+                                  win:Annotated[str,Field(min_length=1,max_length=24)]='THẮNG')->dict[str,Any]:
+        """Apply or revert the three wordmarks and their native layout atomically. Save or export using the normal workflow."""
+        self.check_revision(expected_revision)
+        labels=dict(draw=draw,loss=loss,win=win) if enabled else None
+        changed=self.project.set_battle_badges(labels,self.visual_context().catalog)
+        return dict(revision=self.project.revision,changed=changed,badges=self.project.battle_badges)
+
+    @locked
     def describe_ui_scene(self,family:Annotated[str,Field(min_length=1,max_length=40)],state:dict[str,Any]|None=None,
                           expected_catalog_revision:Id|None=None)->dict[str,Any]:
         """Discover this family's exact parameter names/defaults/types/choices and state-dependent bounds. Unknown or invalid supplied fields reject; no GUI/game state changes."""
@@ -523,6 +556,78 @@ class TranslationWorkspace:
         font=effective_font(self.project,self._runtime.text);profile=bool(self.project.font_asset)
         result=TextLayoutService(font,self._runtime.settings,project=self.project,script_id=script_id,command=command).wrap(command.opcode,allowed[field] if text is None else text,field=field,width=width,dialogue_mode=dialogue_mode,full_width_latin=full_width_latin or profile and command.opcode in {0x64,0x3f2,0x3f8},preserve_speaker=profile,reflow=reflow)
         return dict(revision=self.project.revision,script_id=script_id,command_id=command_id,field=field,**result)
+
+    @locked
+    def list_speaker_repairs(self,script_id:Index|None=None,start:Index=0,limit:Limit=30)->dict[str,Any]:
+        """Page translated Messages with a source speaker and no visible label. Lists established labels and exact expected text."""
+        from .speakeredit import LOCALIZED_LABELS,speaker_name
+        formatter=self.project.text_format
+        if formatter is None:raise ValueError('Load the game text format before inspecting speakers')
+        key=('speaker_repairs',script_id,self.project.revision)
+        if key not in self._cache:
+            scripts=[self.script(script_id)] if script_id is not None else self.project.scripts.values()
+            rows=[]
+            for script in scripts:
+                for command in script.commands:
+                    original=self._baseline.get(command.uid)
+                    if command.opcode!=0x64 or original is None or original.opcode!=0x64:continue
+                    current=command.args['text'];source=original.args['text']
+                    if not current or source==current:continue
+                    try:
+                        if speaker_name(formatter,current):continue
+                        label=speaker_name(formatter,source)
+                    except ValueError:continue
+                    if label:
+                        rows.append(dict(script_id=script.id,command_id=command.uid,original_speaker=label,
+                                         suggested_speaker=LOCALIZED_LABELS.get(label),expected_text=current))
+            self._cache[key]=rows
+        rows=self._cache[key]
+        return dict(revision=self.project.revision,candidates=rows[start:start+limit],total=len(rows),
+                    next_start=start+limit if start+limit<len(rows) else None)
+
+    @locked
+    def preview_message(self,script_id:Index,command_id:Id,include_image:bool=True,
+                        expected_text:Annotated[str,Field(max_length=1048576)]|None=None,
+                        speaker:Annotated[str,Field(min_length=1,max_length=128)]|None=None,
+                        expected_speaker:Annotated[str,Field(max_length=128)]|None=None,
+                        side:Literal[0,1]=0)->dict[str,Any]:
+        """Preview the exact Message with ruby, keyword and timed cue metadata. Pass expected_text to preview a speaker repair without committing it."""
+        from .speakeredit import message_inspection,queue_cues
+        from .text import unicode_text
+        _,command=self.command(script_id,command_id)
+        if command.opcode!=0x64:raise ValueError('Select a Message command')
+        value=command.args['text'];proposal=None
+        if expected_text is not None:
+            proposal=self.project.speaker_proposal(script_id,command_id,expected_text,speaker,expected_speaker)
+            value=proposal['text']
+        elif speaker is not None or expected_speaker is not None:raise ValueError('A speaker draft requires exact expected_text')
+        font=effective_font(self.project,self._runtime.text)
+        recipe,layout=message_inspection(self.project,font,self._runtime.settings,script_id,command,value,side)
+        preview=self.get_ui_scene(recipe['family'],recipe['state'],include_image=include_image)
+        parsed=font.format.ordinary(value,geometry_only=True)
+        preview.update(script_id=script_id,command_id=command_id,speaker=unicode_text(parsed['name']) or None,
+                       speaker_proposal=proposal,layout=layout,queue_cues=queue_cues(parsed),
+                       ruby=[dict(start=start,end=end,reading=unicode_text(reading)) for start,end,reading in parsed['ruby']],
+                       keywords=parsed['keywords'])
+        return preview
+
+    @locked
+    def apply_speaker_repairs(self,edits:Annotated[list[SpeakerEdit],Field(min_length=1,max_length=100)],
+                              expected_revision:Id)->dict[str,Any]:
+        """Atomically repair visible Message names using exact revision and text. Only the name and any required outer quotes change. Fit is reported separately."""
+        from .speakeredit import message_inspection
+        from .textregions import BattleTextRegions
+        self.check_revision(expected_revision)
+        font=effective_font(self.project,self._runtime.text)
+        regions=BattleTextRegions(self.project,font,self._runtime.settings)
+        rows=[(SpeakerEdit.model_validate(edit) if isinstance(edit,dict) else edit).model_dump() for edit in edits]
+        applied=self.project.set_message_speakers(rows,expected_revision)
+        if applied:self._cache={};self._preview_revision=None
+        for row in applied:
+            _,command=self.command(row['script_id'],row['command_id'])
+            _,row['layout']=message_inspection(self.project,font,self._runtime.settings,row['script_id'],
+                                               command,row['text'],regions=regions)
+        return dict(revision=self.project.revision,applied=applied)
 
     @locked
     def analyze_text_cleanup(self,script_id:Index|None=None,command_ids:Annotated[list[Id],Field(max_length=1000)]|None=None,

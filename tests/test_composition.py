@@ -4,11 +4,37 @@ import tempfile
 import unittest
 from PySide6.QtGui import QImage, QColor
 from editor.composition import Layer, Composition, blit, text_layer, EnvironmentLibrary
+from editor.compositionlists import slot_review_line
+from editor.uitextcodec import format_ui_numbers
 from editor.compositionrender import clamped_crop, render_composition, FontConsumer
 from editor.imagecodec import ImageError
 
 
 class CompositionTests(unittest.TestCase):
+    def test_slot_review_keeps_format_arguments_and_fits_native_card_width(self):
+        class Font:
+            format = type('Format', (), {'break_char': '＿'})()
+            cached = {}
+            bitmap_height = 36
+
+            def measure(self, text, size):
+                return sum(size if ord(c) > 0x7e else size // 2 for c in text)
+
+        font = Font()
+        rgba = [0, 0, 0, 255]
+        date = format_ui_numbers('Ngày:%d/%02d/%02d', (2026, 1, 5))
+        native = text_layer('Date', date, [0, 0], 14, rgba, font)
+        review = slot_review_line('Date', date, [0, 0], 14, rgba, font)
+        self.assertEqual(native.text, 'Ngày:２０２６/０１/０５')
+        self.assertEqual(review.text, 'Ngày:2026/01/05')
+        self.assertLess(review.destination[2], native.destination[2])
+
+        review = slot_review_line('Snippet', 'Có＿muốn bỏ qua phần này', [10, 0], 14, rgba, font, right=94)
+        self.assertEqual(review.text, 'Có muốn…')
+        self.assertLessEqual(review.destination[0] + review.destination[2], 94)
+        number = slot_review_line('Slot', '０１', [80, 0], 14, rgba, font, center=True)
+        self.assertEqual(number.destination[:3], [73, 0, 14])
+
     def pixels(self):
         image = QImage(2, 1, QImage.Format_RGBA8888)
         image.setPixelColor(0, 0, QColor(200, 0, 0, 255))

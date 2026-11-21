@@ -20,8 +20,11 @@ def readable(value,opcode,formatter=None):
         if opcode==0x64:
             parsed=formatter.ordinary(value)
             text,_=formatter.prepare(parsed['body'],unit_text=True)
-            return dict(text=unicode_text(text).replace(unicode_text(formatter.break_char),'\n'),
-                        speaker=unicode_text(parsed['name']) or None)
+            display=dict(text=unicode_text(text).replace(unicode_text(formatter.break_char),'\n'),
+                         speaker=unicode_text(parsed['name']) or None)
+            if parsed['markers'] or parsed['ruby'] or parsed['keywords']:
+                display['display_policy']='Inline controls are omitted from this reading view. Use preview_message for the authored rendering.'
+            return display
         text,_=formatter.prepare(value,font_tags=opcode in {0x3f2,0x3f8})
         return dict(text=unicode_text(text).replace(unicode_text(formatter.break_char),'\n'),speaker=None)
     except (ValueError,UnicodeError) as error:

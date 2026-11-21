@@ -33,13 +33,50 @@ class WidthControlChecks(unittest.TestCase):
     def setUp(self):
         self.font=font_fixture();self.service=TextLayoutService(self.font,{})
 
+    def test_leading_keyword_keeps_native_aside_and_inline_keywords_still_pack(self):
+        from unicodedata import normalize
+        from editor.textlayout import script_font_text
+        self.font.format.following[0]='（【'
+        self.font.format.following[2]='「」'
+        self.font.width=1000
+        marks={'【':'龠','】':'龝'}
+        self.font.pair_spacing=dict(pairs={},keyword_marks=marks,restore={v:k for k,v in marks.items()})
+        self.font.asset_sha256='fixture'
+        tag='【《KEYWORD = 121》Word《/KEYWORD》】'
+        aside='Megumi「'+tag+' a phrase＿with a break.」'
+        wire=script_font_text(self.font,aside,0x64,{},'text',authored=True)
+        self.assertEqual(wire,full_width_text(aside,self.font,preserve_speaker=True)['text'])
+        geometry=self.service.measure_dialogue(aside,font_authored=True)
+        self.assertTrue(normalize('NFKC',geometry['body']).startswith('【Word】'))
+        self.assertEqual(geometry['line_count'],2)
+        result=self.service.wrap(0x64,aside,reflow=True)
+        self.assertIn('《KEYWORD = 121》Word《/KEYWORD》',normalize('NFKC',result['text']))
+        self.assertTrue(normalize('NFKC',result['lines'][0]).startswith('【Word】'))
+
+        inline='Megumi「A '+tag+'.」'
+        shaped=script_font_text(self.font,inline,0x64,{},'text',authored=True)
+        self.assertIn('龠《KEYWORD = 121》Word《/KEYWORD》龝',normalize('NFKC',shaped))
+
+    def test_timed_sentence_spacing_preserves_cues_and_existing_separators(self):
+        from editor.textlayout import space_timed_sentences
+        value='A「Câu rồi.《SP QUE,1,10》《SP QUE,2,20》Câu tiếp!《SP QUE,3,30》 Câu cuối.」'
+        expected=value.replace('》Câu tiếp','》 Câu tiếp')
+        self.assertEqual(space_timed_sentences(self.font.format,value),(expected,1))
+        self.assertEqual(space_timed_sentences(self.font.format,expected),(expected,0))
+        expected_markers=[m[1:] for m in self.font.format.ordinary(value)['markers']]
+        result=self.service.wrap(0x64,value)
+        self.assertEqual(result['inserted_cue_spaces'],1)
+        self.assertIn('《SP QUE,2,20》 Câu',result['text'])
+        self.assertEqual([m[1:] for m in self.font.format.ordinary(result['text'])['markers']],expected_markers)
+        self.assertNotIn('＿',result['text'])
+
     def project(self,text):
         project=fixture();project.text_format=self.font.format
         args=deepcopy(project.scripts[0].commands[2].args);args['text']=text
         project.replace(0,'s0:c2',0x64,args)
         return project
 
-    def test_surrounding_text_ruby_and_tags_keep_queue_positions(self):
+    def test_surrounding_text_ruby_and_tags_keep_queue_and_style_ranges(self):
         source='Eriri「Why here...《SP QUE,1,2700》《RUBY》word《RT》reading《/RUBY》?《KEYWORD = 12》After《/KEYWORD》」'
         packet=self.service.wrap(0x64,source,width=160,full_width_latin=True)
         result=packet['text'];before=self.font.format.ordinary(source);after=self.font.format.ordinary(result)
@@ -47,10 +84,11 @@ class WidthControlChecks(unittest.TestCase):
         self.assertIn('《RUBY》ｗｏｒｄ《RT》ｒｅａｄｉｎｇ《/RUBY》？',result)
         self.assertIn('《KEYWORD = 12》Ａｆｔｅｒ《/KEYWORD》',result)
         self.assertEqual(re.findall('《.*?》',source),re.findall('《.*?》',result))
-        self.assertEqual(before['markers'],after['markers']);self.assertEqual(before['keywords'],after['keywords'])
-        self.assertEqual(before['ruby'][0][:2],after['ruby'][0][:2])
+        self.assertEqual(before['markers'],after['markers'])
+        self.assertEqual([[a+1,b+1,key] for a,b,key in before['keywords']],after['keywords'])
+        self.assertEqual([i+1 for i in before['ruby'][0][:2]],after['ruby'][0][:2])
         self.assertEqual(after['ruby'][0][2],'ｒｅａｄｉｎｇ')
-        self.assertEqual(len(before['body']),len(after['body']))
+        self.assertEqual(len(before['body'])+1,len(after['body']))
         self.assertNotIn('＿',result);self.assertEqual(packet['inserted_breaks'],0)
         self.assertEqual(packet['hyphenations'],0);self.assertIn('wrapping_skipped',packet)
         self.assertEqual(full_width_text(result,self.font)['converted_characters'],0)

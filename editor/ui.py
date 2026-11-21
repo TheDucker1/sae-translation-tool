@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QSplitter, QV
     QHeaderView, QTabWidget, QPlainTextEdit, QTreeWidget, QTreeWidgetItem, QGroupBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QFormLayout, QMessageBox, QListWidget,
     QListWidgetItem, QScrollArea, QInputDialog,QProgressDialog)
-from PySide6.QtWidgets import QMenu
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QMenu
 
 from .engine import Session, ROOT, NAMES, BOUNDARIES, BRANCHES, TEXT_OPS, Analysis, summary, category, branch_options, prepare_condition, text_fields
 from .routes import RouteBook
@@ -497,6 +497,60 @@ class Window(QMainWindow):
             self.edited(sid,uid)
         except Exception as e:self.problem(str(e))
 
+    def edit_speaker(self):
+        from .fontpatch import effective_font
+        from .speakeredit import message_inspection,speaker_name
+        from .uipreview import show_snapshot
+        from .uitext import get_catalog
+        if not self.ensure_project():return
+        index=self.selected();sid=self.script_id;project=self.project
+        if index is None or project.scripts[sid].commands[index].opcode!=0x64:
+            self.problem('Select a Message to edit its speaker.')
+            return
+        self.pause()
+        command=project.scripts[sid].commands[index]
+        revision=project.revision;current=command.args['text']
+        try:previous=speaker_name(project.text_format,current)
+        except ValueError as error:self.problem(str(error));return
+        try:label=project.speaker_proposal(sid,command.uid,current,expected_speaker=previous)['speaker']
+        except ValueError:label=previous
+
+        dialog=QDialog(self);dialog.setWindowTitle('Edit speaker')
+        layout=QFormLayout(dialog)
+        edit=QLineEdit(label,dialog);edit.setMaxLength(128);layout.addRow('Visible speaker',edit)
+        note=QLabel('The dialogue body and inline controls will be preserved.');note.setWordWrap(True)
+        layout.addRow(note)
+        buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
+        preview=buttons.addButton('Preview…',QDialogButtonBox.ActionRole);layout.addRow(buttons)
+
+        def edit_packet():
+            self.guard_edit_snapshot(project,revision)
+            return dict(script_id=sid,command_id=command.uid,expected_text=current,
+                        speaker=edit.text(),expected_speaker=previous)
+
+        def preview_draft():
+            try:
+                proposal=project.speaker_proposal(**edit_packet())
+                font=effective_font(project,self.session.text)
+                recipe,fit=message_inspection(project,font,self.session.settings,sid,command,proposal['text'])
+                if fit.get('standalone_fits') is False:
+                    note.setText(f'Dialogue uses {fit["line_count"]} rows. Standalone capacity is {fit["capacity"]} rows at {fit["width"]} px.')
+                elif fit.get('warning'):note.setText(fit['warning'])
+                show_snapshot(self,project,project,recipe,get_catalog(project),'Speaker draft',True)
+            except (ValueError,OSError,RuntimeError) as error:note.setText(str(error))
+
+        def apply():
+            try:
+                edits=project.set_message_speakers([edit_packet()],revision)
+            except (ValueError,OSError,RuntimeError) as error:
+                note.setText(str(error))
+                return
+            dialog.done(2 if edits else 1)
+
+        preview.clicked.connect(preview_draft)
+        buttons.accepted.connect(apply);buttons.rejected.connect(dialog.reject)
+        if dialog.exec()==2:self.edited(sid,command.uid,known_valid=True)
+
     def delete_text(self,*_):
         self.pause();index=self.selected()
         if index is None or not self.ensure_project():return
@@ -646,6 +700,8 @@ class Window(QMainWindow):
         index=self.table.indexAt(position)
         if index.isValid():self.table.selectRow(index.row())
         menu=QMenu(self);menu.addAction('Preview here (replay)',self.jump_selected);menu.addAction('Copy original text',self.copy_text)
+        speaker=menu.addAction('Edit speaker…',self.edit_speaker)
+        selected=self.selected();speaker.setEnabled(selected is not None and self.commands[selected]['opcode']==0x64)
         menu.addSeparator();menu.addAction('Add text before…',lambda:self.edit_text('before'));menu.addAction('Add text after…',lambda:self.edit_text('after'));menu.addAction('Edit text opcode…',lambda:self.edit_text('edit'));menu.addAction('Replace text opcode…',lambda:self.edit_text('replace'));menu.addAction('Delete text opcode…',self.delete_text)
         menu.addSeparator();menu.addAction('DEBUG: Sandbox jump — keeps unrelated state',self.sandbox_jump_selected)
         menu.exec(self.table.viewport().mapToGlobal(position))

@@ -20,6 +20,18 @@ class UiFittingChecks(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'single-line'):fixed_check('Hello＿world',c,font)
         c['right']=36;self.assertEqual(fixed_check('Hi  ',c,font)[0]['width'],36)
 
+    def test_fixed_label_bounds_exclude_transparent_font_padding(self):
+        font=self.font();font.ink_cache={}
+        font.cached['A']=(0,0,0,36,24)
+        pixels=bytearray(36*24*4);pixels[7*4+3]=255
+        font.atlas_cache={0:(36,24,pixels)}
+        contract=dict(scale=2/3,point=[0,0],left=0,right=21)
+        packet=fixed_check('AA',contract,font)[0]
+        self.assertEqual(packet['width'],21)  # Second fixed cell starts at x=12.
+        font.fit_atlas_overrides={0}
+        with self.assertRaisesRegex(ValueError,'Shorten'):
+            fixed_check('AA',contract,font)
+
     def test_measured_wrapping_uses_native_height_and_preserves_text(self):
         font=self.font();contract=dict(width=320,scale=1,height=108)
         value=match_style('Hello there, reader.',font,LAYOUT)['text']
@@ -36,6 +48,36 @@ class UiFittingChecks(unittest.TestCase):
         template='Ｈｅｌｌｏ %ls ａｎｄ ｗｅｌｃｏｍｅ ｂａｃｋ.'
         result=ConsumerLayout(font,dict(width=320,scale=1,height=180),['Ａｌｉｃｅ']).wrap(0x3f8,template)
         self.assertEqual(result['text'].count('%ls'),1);self.assertIn('＿',result['text'])
+
+    def test_stock_timer_uses_compact_separator_and_native_digit_cells(self):
+        from editor.uitext import prepare
+        from editor.uitextcodec import counted_spans
+
+        source = 'env/env_omake.dat'
+        node = source + ':'
+        key = node + '#s0'
+        def parse(data): return Reader(data).string()
+
+        original = '%d：%02d'
+        raw = string(original)
+        contract = dict(scale=.5, point=[0,0], left=0, right=150, format_samples=[[3,5]],
+                        normalize_numbers=True, format_capacity=64)
+        field = dict(source=source, node_id=node, index=0, route=[], original=original, role='UI text', contracts=[contract])
+        catalog = SimpleNamespace(verify=lambda: None, fields={key:field}, nodes={node:dict(
+            id=node, source=source, data=raw, spans=counted_spans(raw,parse), parser=parse, table=None, chain=())})
+        font = self.font()
+        self.assertEqual(prepare({},None,catalog,font=font)[0],{})
+        font.asset_sha256 = 'patched'
+        changes, rows, _ = prepare({},None,catalog,font=font)
+        self.assertTrue(rows[0]['automatic'])
+        pattern = parse(changes[source][0][1])
+        self.assertEqual(pattern,'%d:%02d')
+        wide = fixed_check(original,contract,font)[0]
+        compact = fixed_check(pattern,contract,font)[0]
+        self.assertEqual(compact['text'],'３:０５')
+        self.assertEqual(wide['width']-compact['width'],font.utility//4)
+        with self.assertRaisesRegex(ValueError,'buffer'):
+            fixed_check(pattern + 'x'*60,contract,font)
 
     def test_help_is_checked_as_a_whole_row(self):
         font=self.font();contract=dict(kind='help_group',rectangle=[0,0,100,30],members=[dict(key=-1,field_id='a'),dict(key=-1,field_id='b')],keys=[],separator='',scale=1,gap=5,group='row')

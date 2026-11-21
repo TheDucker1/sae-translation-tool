@@ -177,6 +177,14 @@ def metadata_issues(records,c):
 
 STOCK_LABEL_SOURCES={'env/env_dialog.dat','env/env_omake.dat'}
 STORAGE_SUFFIX = 'env/env_save_manager.dat:#s47'
+NUMERIC_FORMAT_SOURCES = {'env/env_saveload.dat', 'env/env_omake.dat'}
+NUMERIC_SEPARATORS = str.maketrans('：／', ':/')
+
+
+def stock_numeric_format(field):
+    return (field['source'] in NUMERIC_FORMAT_SOURCES
+            and any(c.get('normalize_numbers') for c in field.get('contracts', ()))
+            and any(c in '：／' for c in field['original'].partition('\0')[0]))
 
 
 def stock_label(field):
@@ -194,32 +202,41 @@ def stock_label(field):
 
 def effective_node(c,node_id,records,data=None,*,pairing=None,used_aliases=None,font=None,pack_label=None,storage_number=None,wire_overrides=None):
     from .fontstyle import match_style
-    from .choiceart import ui_label_placement, ui_row_placement
+    from .choiceart import pack_slot_prefix,slot_prefix_size,ui_label_placement,ui_row_placement
     from .uifit import pack_rows,preserved_tip_edits,validate_tips
     n=c.nodes[node_id];edits={}
+    patched_font = getattr(font, 'asset_sha256', None)
     for key,f in c.fields.items():
         if f['node_id'] != node_id: continue
         if wire_overrides and key in wire_overrides:
             edits[f['index']]=wire_overrides[key]
             continue
+        authored = key in records
         storage = storage_number if key == STORAGE_SUFFIX else None
-        if key in records or storage or pack_label and stock_label(f):
-            authored=key in records
-            text=records[key]['text'] if authored else f['original']
-            extent=None
-            if getattr(font,'asset_sha256',None):
-                text=match_style(text,font,f['renderer'])['text']
-            if pack_label and (placement:=ui_label_placement(f,font)):
-                size,options=placement
-                text,extent=pack_label(text,size,**options)
-            elif pack_label and (placement:=ui_row_placement(f,font)):
-                size,separator=placement
-                text=pack_rows(text,separator,size,pack_label)
-            if storage:
-                text = storage + text
-            if authored or storage or extent is not None:
-                edits[f['index']]=wire_value(n['spans'][f['index']],text,pairing,
-                    formatter=getattr(font,'format',None),measured=f.get('renderer')=='measured_layout')
+        numeric = bool(patched_font and stock_numeric_format(f))
+        if not (authored or storage or numeric or pack_label and stock_label(f)): continue
+        text = records[key]['text'] if authored else f['original']
+        if patched_font and (authored or not numeric):
+            text=match_style(text,font,f['renderer'])['text']
+        if numeric:
+            # The native table widens generated digits and spaces, but leaves these
+            # separators alone. Keep the exact printf operands and their order.
+            visible, separator, suffix = text.partition('\0')
+            text = visible.translate(NUMERIC_SEPARATORS) + separator + suffix
+        styled = text
+        if pack_label and (placement:=ui_label_placement(f,font)):
+            size,options=placement
+            text,_=pack_label(text,size,**options)
+        elif pack_label and (placement:=ui_row_placement(f,font)):
+            size,separator=placement
+            text=pack_rows(text,separator,size,pack_label)
+        elif pack_label and (size:=slot_prefix_size(f,font)):
+            text,_=pack_slot_prefix(text,size,pack_label)
+        if storage:
+            text = storage + text
+        if authored or storage or numeric or text != styled:
+            edits[f['index']]=wire_value(n['spans'][f['index']],text,pairing,
+                formatter=getattr(font,'format',None),measured=f.get('renderer')=='measured_layout')
     preserved_tip_edits(c,n,records,edits)
     if not edits:return n['data'] if data is None else data
     original=n['data']
@@ -249,7 +266,8 @@ def effective_node(c,node_id,records,data=None,*,pairing=None,used_aliases=None,
 
 
 def prepare(records,root,catalog=None,*,check_metadata=True,pairing=None,used_aliases=None,font=None,pack_label=None,storage_number=None):
-    if not records and not (pairing and used_aliases is not None):return {},[],None
+    patched_font = getattr(font, 'asset_sha256', None)
+    if not records and not patched_font and not (pairing and used_aliases is not None):return {},[],None
     c=catalog or build_catalog(root);validate_records(records,c,pairing=pairing);changes={};rows=[]
     if pairing and used_aliases is not None:
         reserved = set(pairing['restore'])
@@ -267,6 +285,8 @@ def prepare(records,root,catalog=None,*,check_metadata=True,pairing=None,used_al
         nodes.add(c.fields[STORAGE_SUFFIX]['node_id'])
     if pack_label:
         nodes.update(f['node_id'] for f in c.fields.values() if stock_label(f))
+    numeric = {key: f for key, f in c.fields.items() if patched_font and key not in records and stock_numeric_format(f)}
+    nodes.update(f['node_id'] for f in numeric.values())
     from .uifit import profile_context
     context=profile_context(c,records)
     if context and context['columns']!=context['original']:
@@ -277,4 +297,6 @@ def prepare(records,root,catalog=None,*,check_metadata=True,pairing=None,used_al
         if result!=n['data']:changes.setdefault(n['source'],[]).append((n['chain'],result))
     for key,record in records.items():
         f=c.fields[key];rows.append(dict(field_id=key,source=f['source'],route=f['route'],changed=record['text']!=f['original']))
+    for key,f in numeric.items():
+        rows.append(dict(field_id=key,source=f['source'],route=f['route'],changed=True,automatic=True))
     c.verify();return changes,rows,c

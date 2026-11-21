@@ -48,7 +48,7 @@ def add_shadow(out, layer):
     out.layers.extend([shadow, layer])
 
 
-def dialogue_annotations(out,font,body,glyphs,parsed,origin,scale):
+def dialogue_annotations(out,font,body,glyphs,parsed,origin,scale,*,shadow=False):
     from .presentation import ruby_positions
     keywords={i for start,end,_ in parsed['keywords'] for i in range(start,end)}
     if keywords:
@@ -60,10 +60,11 @@ def dialogue_annotations(out,font,body,glyphs,parsed,origin,scale):
             pos=glyph['rect'][:2]
             mark=text_layer('',font.format.break_char,pos,body.size,color,font)
             underline.glyphs.extend(mark.glyphs)
-        add_shadow(out,underline)
+        if shadow:add_shadow(out,underline)
+        else:out.layers.append(underline)
     for _,reading,x,y,size in ruby_positions(font,glyphs,origin,scale,parsed['ruby']):
         value=unicode_text(reading)
-        out.layers.append(text_layer('Ruby shadow',value,[x+1,y+1],size,font.ruby_shadow[:3]+[body.rgba[3]],font))
+        if shadow:out.layers.append(text_layer('Ruby shadow',value,[x+1,y+1],size,font.ruby_shadow[:3]+[body.rgba[3]],font))
         out.layers.append(text_layer('Ruby reading',value,[x,y],size,body.rgba,font))
 
 

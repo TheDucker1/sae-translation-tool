@@ -30,6 +30,14 @@ class UiTextEdit(StrictModel):
     translation:Annotated[str,Field(max_length=8192)]
 
 
+class SpeakerEdit(StrictModel):
+    script_id:Index
+    command_id:Id
+    expected_text:Annotated[str,Field(max_length=1048576)]
+    speaker:Annotated[str,Field(min_length=1,max_length=128)]|None=None
+    expected_speaker:Annotated[str,Field(max_length=128)]|None=None
+
+
 class CommandEdit(StrictModel):
     action:Literal['insert_before','insert_after','replace','delete']
     script_id:Index

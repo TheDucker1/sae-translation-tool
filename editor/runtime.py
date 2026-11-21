@@ -140,10 +140,11 @@ class Session:
                 for command in data['commands']:
                     if 'decode_error' in command['args']:
                         issues.append(dict(script=sid,command=command['index'],message=command['args']['decode_error']))
+                keep_source_font=set(item.get('keep_source_font',[]))
                 for index in item.get('check_text',[]):
                     c=data['commands'][index]
                     candidate.text.validate(c['opcode'],c['args'])
-                    c['authored']=True
+                    c['authored']=index not in keep_source_font
             except (ValueError,IndexError,KeyError) as e:issues.append(dict(script=sid,command=-1,message=str(e)))
         result=dict(issues=issues,warnings=[])
         if not issues and apply:

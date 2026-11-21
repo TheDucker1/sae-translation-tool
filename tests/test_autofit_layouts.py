@@ -107,6 +107,26 @@ class AutoFitLayouts(unittest.TestCase):
         wire=script_font_text(self.font,proposal['text'],0x64,{},'text',authored=True)
         self.assertEqual(wire,proposal['text'])
 
+    def test_new_break_uses_available_width_and_preserves_manual_break(self):
+        service=TextLayoutService(self.font,self.settings)
+        draft='One two five six.'
+        result=service.wrap(0x64,draft,width=245)
+        self.assertEqual(result['lines'],['One two five','six.'])
+        self.assertEqual(service.wrap(0x64,result['text'],width=245)['text'],result['text'])
+        explicit='One＿two five six.'
+        self.assertEqual(service.wrap(0x64,explicit,width=245)['text'],explicit)
+        self.assertEqual(service.wrap(0x64,explicit,width=245,reflow=True)['lines'],result['lines'])
+
+    def test_vietnamese_spaces_are_regular_break_points(self):
+        service=TextLayoutService(self.font,self.settings)
+        result=service.wrap(0x64,'A a a a đột nhiên.',width=250)
+        self.assertEqual(result['lines'],['A a a a đột','nhiên.'])
+
+    def test_no_mechanical_hyphen_for_accented_syllable(self):
+        service=TextLayoutService(self.font,self.settings)
+        with self.assertRaisesRegex(ValueError,'Unbreakable word'):
+            service.wrap(0x64,'trường',width=100,hyphenate=True)
+
     def test_padded_timed_message_exports_and_undoes(self):
         from test_game_export import source_fixture
         with tempfile.TemporaryDirectory(dir=ROOT/'.local') as folder:

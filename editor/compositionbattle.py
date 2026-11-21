@@ -9,11 +9,14 @@ from .imagecodec import ImageError
 from .text import color, units
 
 
-def battle_environment(data):
+def battle_environment(data, *, result_offsets=None):
     r = Reader(data); r.take(15); words = lambda n: [r.word('i') for _ in range(n)]
     table = lambda fn: [fn() for _ in range(r.count())]; sp = lambda: sprite(r)
     pts = lambda: table(lambda: words(2)); rects = lambda: table(lambda: words(4))
     colors = lambda: table(lambda: color(r.word()))
+    def result_table(key,read):
+        if result_offsets is not None:result_offsets[key]=r.pos+4
+        return read()
     e = dict(minimum=r.word('i'), thresholds=table(lambda: r.word('i')), gauge=sp(), bars=[words(4) for _ in range(2)])
     e['versus'] = [sp() for _ in range(4)]; e['name_scale'], e['caption_scale'] = r.word('f'), r.word('f')
     e['name_positions'], e['name_sizes'], e['name_offsets'] = pts(), pts(), table(lambda: r.word('i'))
@@ -22,11 +25,18 @@ def battle_environment(data):
     e['dialogue_offsets'], e['width'] = [words(2) for _ in range(2)], r.word('i')
     e['auxiliary_sprites'] = [sp() for _ in range(5)]; e['auxiliary_points'] = table(pts)
     r.take(2 * 34 + 4 + 34 + 12); r.take(r.count() * 4); r.take(34 + 16 + 3 * 34)
-    e['result_sprites'] = [sp(), sp()]; e['glyph_color'] = color(r.word())
-    e['equal_rectangles'], e['equal_positions'] = rects(), pts(); e['result_sprites'].extend([sp(), sp()])
+    e['result_sprites'] = [sp(), sp()]
+    if result_offsets is not None:result_offsets['glyph_color']=r.pos
+    e['glyph_color'] = color(r.word())
+    e['equal_rectangles']=result_table('equal_rectangles',rects)
+    e['equal_positions']=result_table('equal_positions',pts)
+    e['result_sprites'].extend([sp(), sp()])
     e['upper_color'], e['lower_color'] = color(r.word()), color(r.word())
-    e['upper_rectangles'], e['lower_rectangles'] = rects(), rects()
-    e['upper_positions'], e['lower_positions'], e['upper_bases'], e['lower_bases'] = pts(), pts(), pts(), pts()
+    e['upper_rectangles']=result_table('upper_rectangles',rects)
+    e['lower_rectangles']=result_table('lower_rectangles',rects)
+    e['upper_positions']=result_table('upper_positions',pts)
+    e['lower_positions']=result_table('lower_positions',pts)
+    e['upper_bases'],e['lower_bases']=pts(),pts()
     e['timing'] = words(13); e['upper_scale'] = struct.unpack('<f', struct.pack('<i', e['timing'][2]))[0]
     e['gauge_duration'], e['display_per_point'], e['x_per_point'], e['scale_per_point'] = r.word('i'), r.word('i'), r.word('i'), r.word('f')
     e['result_poses'] = words(4)
@@ -102,6 +112,8 @@ def introduction(out, e, state, font):
 
 def dialogue(out, e, state, font):
     from .textlayout import native_newlines, script_font_text
+    was_read = state.get('read_color', False)
+    color = font.read if was_read else font.unread
     for side in range(2):
         kind = state.get('bubble_' + str(side), 0)
         if kind == 3: continue
@@ -112,13 +124,14 @@ def dialogue(out, e, state, font):
                           scale_x=e['bubble_scale'], scale_y=e['bubble_scale'], tint=tint + [alpha])
         value = state.get('dialogue_' + str(side), '') or 'Dialogue preview'
         sample = native_newlines(value, font.format)
-        wire = script_font_text(font, sample, 0x64, {}, 'text', authored=True)
+        wire = script_font_text(font, sample, 0x64, {}, 'text', authored=state.get('font_authored',True))
         parsed = font.format.ordinary(wire, geometry_only=True)
         glyphs = font.layout(parsed['body'],e['width'],font.scale,ruby=parsed['ruby'])
         layer = positioned_plain('Battle dialogue text', parsed['body'], *e['dialogue_positions'][side],
-                                 e['width'], font.scale, font.unread, font, offsets=e['dialogue_offsets'],glyphs=glyphs)
-        add_shadow(out, layer)
-        dialogue_annotations(out,font,layer,glyphs,parsed,layer.destination[:2],font.scale)
+                                 e['width'], font.scale, color, font, offsets=e['dialogue_offsets'],glyphs=glyphs)
+        if was_read:add_shadow(out,layer)
+        else:out.layers.append(layer)
+        dialogue_annotations(out,font,layer,glyphs,parsed,layer.destination[:2],font.scale,shadow=was_read)
     out.notes.append('Dialogue text is fully revealed in the static battle view.')
 
 
@@ -201,6 +214,7 @@ def battle_layout(library, state, font):
 
 
 def parameter_visible(name, view):
+    if name in ('read_color','font_authored'): return view == 1
     if name.startswith(('side_', 'caption_')): return view == 0
     if name.startswith(('bubble_', 'dialogue_')): return view == 1
     if name in ('choices', 'seconds', 'pulse', 'visited') or name.startswith('type_'): return view == 2

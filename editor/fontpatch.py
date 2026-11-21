@@ -316,14 +316,21 @@ def validate_asset(asset,root):
 def effective_font(project,font):
     asset=getattr(project,'font_asset',None)
     original=getattr(font,'source_font',font)
-    if asset is None:return original
-    digest=asset['manifest']['font_sha256']
-    if getattr(font,'asset_sha256',None)==digest:return font
-    result=TextPresentation(project.root,font_asset=bytes.fromhex(asset['data_hex']));result.asset_sha256=digest
-    from .pairspacing import config_for
-    result.pair_spacing = config_for(asset)
-    result.source_font=original
+    if asset is None:result=original
+    elif getattr(font,'asset_sha256',None)==asset['manifest']['font_sha256']:result=font
+    else:
+        result=TextPresentation(project.root,font_asset=bytes.fromhex(asset['data_hex']))
+        result.asset_sha256=asset['manifest']['font_sha256']
+        from .pairspacing import config_for
+        result.pair_spacing=config_for(asset)
+        result.source_font=original
+    result.fit_atlas_overrides=overridden_font_atlases(project)
     return result
+
+
+def overridden_font_atlases(project):
+    indexes=(key.partition(':')[2] for key in getattr(project,'texture_assets',{}) if key.startswith('Font.gsf:'))
+    return frozenset(int(index) for index in indexes if index.isdecimal())
 
 
 def main():

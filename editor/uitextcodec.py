@@ -5,6 +5,23 @@ import struct
 from .scriptcodec import Reader, STRING_OBSERVER, string
 
 
+WIDE_NUMBERS = str.maketrans('0123456789 ', '０１２３４５６７８９　')
+
+
+def format_ui_numbers(pattern, values, *, capacity=128):
+    """Format the save card and music timer, then widen exactly the native table."""
+    directives = re.findall(r'%(?:0?[0-9]{0,3}d|%)', pattern)
+    if pattern.count('%') != sum(2 if token == '%%' else 1 for token in directives):
+        raise ValueError('Unsupported numeric format in UI environment')
+    try:
+        text = pattern % tuple(values)
+    except (TypeError, OverflowError) as error:
+        raise ValueError(str(error)) from error
+    if len(text.encode('utf-16-le', errors='surrogatepass')) >= capacity * 2:
+        raise ValueError('Numeric UI text exceeds the native format buffer')
+    return text.translate(WIDE_NUMBERS)
+
+
 def ui_string(reader,role):
     previous=getattr(reader,'ui_role','UI text');reader.ui_role=role
     try:return reader.string()

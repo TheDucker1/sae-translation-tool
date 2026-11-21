@@ -1,6 +1,7 @@
 """Pack proportional labels for Saekano's fixed-cursor DrawString."""
 from dataclasses import dataclass
 from functools import lru_cache
+from math import floor
 from statistics import median
 import struct
 import unicodedata
@@ -13,6 +14,7 @@ END_CARRIER = 0xF900
 ATLAS_EDGE = 512
 TILES_PER_ROW = 20
 ROWS_PER_ATLAS = 19  # First row is blank and holds measured centering records.
+STOCK_LABEL_SYMBOLS = frozenset('☆★')
 
 
 @dataclass(frozen=True)
@@ -128,6 +130,27 @@ def ui_row_placement(field, font):
     return next(iter(placements)) if len(placements)==1 else None
 
 
+def slot_prefix_size(field,font):
+    """Only the verified numeric slot renderer can pack its literal prefix."""
+    if not getattr(font,'pair_spacing',None) or field.get('source')!='env/env_saveload.dat':
+        return None
+    contracts=field.get('contracts',())
+    if (not contracts or not field.get('format_tokens')
+            or any(c['kind']!='fixed' or c.get('align')!='left' or not c.get('normalize_numbers') for c in contracts)):
+        return None
+    sizes={floor(font.utility*c['scale'] + (.5 if c.get('round_size') else 0)) for c in contracts}
+    return next(iter(sizes)) if len(sizes)==1 else None
+
+
+def pack_slot_prefix(value,size,encode):
+    from .uitextcodec import PRINTF
+    first=PRINTF.search(value)
+    if first is None:return value,None
+    prefix=value[:first.start()].rstrip()
+    wire,width=encode(prefix,size,align='left')
+    return wire+value[len(prefix):],width
+
+
 def _tile_layout(ink, size, align, panel_size, panel_padding):
     """Choose transparent records that calibrate native centering and panel sizing."""
     width = (ink * size + CELL - 1) // CELL
@@ -169,7 +192,7 @@ def stock_symbol_mask(glyph):
     return CELL,bytes(cell.constBits())[3::4]
 
 
-def make_label(font, text, size, *, align='center', panel_size=None, panel_padding=0,
+def make_label(font, text, size, *, align='center', panel_size=None, panel_padding=0, allow_numbers=False,
                extra_symbols=frozenset()):
     """Build fixed cells containing proportional Latin text at the authored size."""
     if (not getattr(font, 'pair_spacing', None) or not 8 <= size <= 64 or font.bitmap_height != CELL
@@ -177,11 +200,13 @@ def make_label(font, text, size, *, align='center', panel_size=None, panel_paddi
             or any(c in text for c in ('\r', '\n', font.format.break_char))):
         return None
     letters = [c for c in text if c.isalpha()]
-    if not letters or any('LATIN' not in unicodedata.name(c, '') for c in letters):
+    if any('LATIN' not in unicodedata.name(c, '') for c in letters):
+        return None
+    if not letters and not (allow_numbers and any(c.isdecimal() for c in text)):
         return None
     from .textlayout import full_width_text
     value = narrow(full_width_text(text.replace('　',' '), font)['text'], font.pair_spacing)
-    if any(c not in font.cached and (c not in extra_symbols or c not in font.charset) for c in value):
+    if any(c not in font.cached and (c not in STOCK_LABEL_SYMBOLS | extra_symbols or c not in font.charset) for c in value):
         return None
 
     draws = []
@@ -197,7 +222,8 @@ def make_label(font, text, size, *, align='center', panel_size=None, panel_paddi
             record_width,mask=stock_symbol_mask(glyph)
         ink = max((i % record_width + 1 for i, alpha in enumerate(mask) if alpha), default=0)
         if ink:
-            if previous.isalpha() and char.isalpha():
+            if (previous.isalpha() and char.isalpha()
+                    or allow_numbers and previous and not previous.isspace() and not char.isspace()):
                 prior_x, prior_mask, prior_width, _ = draws[-1]
                 pen += optical_shift(prior_mask, prior_width, mask, record_width, pen - prior_x)
             draws.append((pen, mask, record_width, ink))
@@ -237,11 +263,12 @@ class ChoiceAtlas:
         self.labels = {}
         self.geometry = {}
 
-    def encode(self, text, size, *, align='center', panel_size=None, panel_padding=0, extra_symbols=frozenset()):
-        key = (text, size, align, panel_size, panel_padding, extra_symbols)
+    def encode(self, text, size, *, align='center', panel_size=None, panel_padding=0, allow_numbers=False,
+               extra_symbols=frozenset()):
+        key = (text, size, align, panel_size, panel_padding, allow_numbers, extra_symbols)
         if key not in self.labels:
             label = make_label(self.font, text, size, align=align, panel_size=panel_size,
-                               panel_padding=panel_padding, extra_symbols=extra_symbols)
+                               panel_padding=panel_padding, allow_numbers=allow_numbers, extra_symbols=extra_symbols)
             if label is None:
                 return text, None
             wire = ''.join(self.register(cell) for cell in label.cells)

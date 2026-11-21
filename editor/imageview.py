@@ -1,12 +1,13 @@
 """Nonmodal source browser and project PNG replacements; originals stay read-only."""
 from collections import OrderedDict
 import json
+from pathlib import Path
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QThread, Signal, QRectF
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QComboBox, QTableView, QHeaderView, QSplitter,
     QTabWidget, QPlainTextEdit, QListWidget, QListWidgetItem, QGraphicsView,
-    QGraphicsScene, QFileDialog, QMessageBox, QCheckBox)
+    QGraphicsScene, QFileDialog, QMessageBox, QCheckBox, QFormLayout, QDialogButtonBox)
 from .imageassets import build_catalog, extract_images
 from .imagecodec import ImageCancelled
 from .compositionrender import AssetResolver
@@ -140,6 +141,8 @@ class ImageBrowser(QDialog):
         source_order = QPushButton('Source order'); source_order.clicked.connect(lambda: self.table.sortByColumn(-1, Qt.AscendingOrder)); top.addWidget(source_order)
         self.reindex = QPushButton('Re-index'); self.reindex.clicked.connect(self.rebuild); top.addWidget(self.reindex)
         self.compose_button = QPushButton('UI compositions…'); self.compose_button.clicked.connect(self.show_compositions); top.addWidget(self.compose_button)
+        self.gallery_button = QPushButton('Export UI gallery…'); self.gallery_button.clicked.connect(self.export_gallery); top.addWidget(self.gallery_button)
+        self.badges_button = QPushButton('Battle results…'); self.badges_button.clicked.connect(self.edit_battle_badges); top.addWidget(self.badges_button)
         self.cancel = QPushButton('Cancel'); self.cancel.clicked.connect(self.cancel_work); top.addWidget(self.cancel)
         outer.addLayout(top)
         self.note = QLabel('Load a game folder first.'); self.note.setWordWrap(True); outer.addWidget(self.note)
@@ -198,11 +201,12 @@ class ImageBrowser(QDialog):
         if self.composition_panel:
             from .uitext import get_catalog
             ui=project.ui_text_assets if project else {}
+            self.composition_panel.battle_badges=project.battle_badges if project else None
             self.composition_panel.set_replacements(self.replacements,self.font,ui,get_catalog(project) if ui else None)
 
     def refresh_pixels(self, *_):
         self.cache.clear(); self.cache_bytes = 0
-        if self.job_kind not in ('index', 'extract'):
+        if self.job_kind not in ('index', 'extract', 'gallery'):
             self.generation += 1; self.pending = None; self.deferred_decode = None
             if self.job:self.job.requestInterruption()
         self.model.dataChanged.emit(self.model.index(0, 0), self.model.index(max(0, self.model.rowCount()-1), 6))
@@ -230,7 +234,7 @@ class ImageBrowser(QDialog):
     def enqueue(self, kind, key, operation, interrupt=False):
         request = (kind, key, operation, self.generation)
         if self.job:
-            if kind == 'decode' and self.pending and self.pending[0] in ('index', 'extract'):
+            if kind == 'decode' and self.pending and self.pending[0] in ('index', 'extract', 'gallery'):
                 self.deferred_decode = request; return
             self.pending = request
             if interrupt or self.job_kind == 'decode': self.job.requestInterruption()
@@ -266,6 +270,11 @@ class ImageBrowser(QDialog):
             if key == self.selected_id:
                 self.canvas.display(result); self.image_note.setText(f'{result.width()} × {result.height()} · wheel to zoom, drag to pan')
                 self.show_region(self.regions.currentItem())
+        elif kind == 'gallery':
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+            self.note.setText(f"Rendered {result['rendered']}/{result['total']} previews to {result['folder']}.")
+            QDesktopServices.openUrl(QUrl.fromLocalFile(result['index']))
         else:
             self.note.setText(f"Extracted {result['count']} images to {result['path']} (manifest.json included).")
 
@@ -301,6 +310,9 @@ class ImageBrowser(QDialog):
         enabled = self.catalog is not None and self.job_kind != 'index' and not extracting
         self.extract_selected.setEnabled(enabled); self.extract_filtered.setEnabled(enabled)
         self.compose_button.setEnabled(self.catalog is not None)
+        exporting_gallery = self.job_kind == 'gallery' or self.pending is not None and self.pending[0] == 'gallery'
+        self.gallery_button.setEnabled(enabled and not exporting_gallery)
+        self.badges_button.setEnabled(enabled)
         ready = enabled and self.selected_id in self.catalog.by_id if self.catalog else False
         self.import_png.setEnabled(ready and self.catalog.by_id[self.selected_id].status == 'Ready')
         self.revert_png.setEnabled(ready and self.selected_id in self.replacements)
@@ -434,8 +446,54 @@ class ImageBrowser(QDialog):
         focus=self.catalog.by_id.get(self.selected_id)
         from .uitext import get_catalog
         ui=self.project.ui_text_assets if self.project else {}
-        self.composition_panel.set_context(self.catalog,self.font,self.sample_text,focus,self.sample_speaker,self.samples,self.replacements,ui,get_catalog(self.project) if ui else None)
+        self.composition_panel.set_context(self.catalog,self.font,self.sample_text,focus,self.sample_speaker,self.samples,self.replacements,ui,get_catalog(self.project) if ui else None,
+            battle_badges=self.project.battle_badges if self.project else None)
         self.composition_panel.show();self.composition_panel.raise_();self.composition_panel.activateWindow()
+
+    def export_gallery(self):
+        from copy import copy
+        from types import SimpleNamespace
+        from .previewgallery import export_gallery
+        from .visualcontext import VisualContext
+        project=self.editable_project()
+        if project is None:return
+        folder=QFileDialog.getExistingDirectory(self,'Choose where to create the UI gallery')
+        if not folder:return
+        snapshot=copy(project); snapshot.scripts=project.scripts.copy()
+        runtime=getattr(self.parent(),'session',None)
+        workspace=SimpleNamespace(project=snapshot,_runtime=runtime)
+        parent=Path(folder)
+        dest=parent/f'UI-preview-{snapshot.revision[:8]}'
+        index=2
+        while dest.exists():
+            dest=parent/f'UI-preview-{snapshot.revision[:8]}-{index}'
+            index+=1
+        def render(progress,cancel):
+            return export_gallery(VisualContext().bind(workspace),workspace,dest,progress,cancel)
+        self.enqueue('gallery',None,render)
+
+    def edit_battle_badges(self):
+        from .battlebadges import DEFAULT_LABELS
+        project=self.editable_project()
+        if not project or not self.catalog:return
+        revision=project.revision
+        dialog=QDialog(self);dialog.setWindowTitle('Battle result badges')
+        form=QFormLayout(dialog);edits={}
+        labels=project.battle_badges['labels'] if project.battle_badges else DEFAULT_LABELS
+        for key,label in labels.items():
+            edit=QLineEdit(label);edit.setMaxLength(24);form.addRow(key.title(),edit);edits[key]=edit
+        buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
+        restore=buttons.addButton('Restore original',QDialogButtonBox.ResetRole)
+        restore.setEnabled(bool(project.battle_badges));restore.clicked.connect(lambda:dialog.done(2))
+        buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);form.addRow(buttons)
+        choice=dialog.exec()
+        if not choice:return
+        try:
+            if self.project is not project or project.revision!=revision:raise ValueError('Project changed; reopen battle results')
+            if project.set_battle_badges({key:edit.text() for key,edit in edits.items()} if choice==1 else None,self.catalog):
+                self.texturesChanged.emit(revision);self.set_project(project)
+            self.note.setText('Battle result badge set updated. Open the battle results preview or export the gallery to review.')
+        except (ValueError,OSError) as error:QMessageBox.warning(self,'Battle result badges',str(error))
 
     def focus_asset(self,identity):
         if self.catalog is None or identity not in self.catalog.by_id:return

@@ -160,7 +160,7 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
             asset = make_asset(project.root, word_space_px=saved_space if word_space_px is None else word_space_px)
     plan['font_changed']=asset!=project.font_asset
     if asset:
-        font=effective_font(type('FontProject',(),dict(root=project.root,font_asset=asset))(),font)
+        font=effective_font(type('FontProject',(),dict(root=project.root,font_asset=asset,texture_assets=project.texture_assets))(),font)
         plan['font_asset']=asset
     from .textregions import BattleTextRegions
     regions=BattleTextRegions(project,font,settings)
@@ -184,8 +184,9 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
                     if c.args['selector']:unsafe.append('Inherited/selector dialogue')
                     if c.uid in retained_context:unsafe.append('Previous message may retain appended text')
                     if unsafe:
-                        if convert_width:
-                            conversion_packet=service.convert_dialogue_width(c.args['text'],width=width,dialogue_mode=mode,preserve_speaker=bool(asset))
+                        if convert_width or timed:
+                            conversion_packet=service.convert_dialogue_width(c.args['text'],width=width,dialogue_mode=mode,
+                                preserve_speaker=bool(asset),convert=convert_width,cue_spacing=timed)
                         geometry=deepcopy(conversion_packet) if conversion_packet else service.measure_dialogue(c.args['text'],width=width,dialogue_mode=mode)
                         capacity=(geometry.get('region') or {}).get('capacity') or dialogue_capacity(font,settings,mode)
                         if max_lines is not None:capacity=min(capacity,max_lines)
@@ -194,7 +195,7 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
                         geometry.update(capacity=capacity,standalone_fits=standalone_fits,fits=None if context_required else standalone_fits,
                                         context_required=context_required,auto_edit=bool(conversion_packet and conversion_packet['changed']))
                         reason=', '.join(unsafe)+': text measured; automatic wrapping/pagination remains disabled.'
-                        if conversion_packet:reason+=' Full-width conversion only; control tags, timing, glyph counts and existing breaks preserved.'
+                        if conversion_packet:reason+=' '+conversion_packet['wrapping_skipped']
                         if parsed_geometry['markers'] and font.format.break_char in parsed_geometry['body']:reason+=' '+TIMED_BREAK_ERROR
                         if context_required:reason+=' Combined appended/inherited display also needs preceding route/buffer state.'
                         if geometry['contains_plain_newlines']:reason+=' LF/CR are not native line breaks in the existing script.'
@@ -229,7 +230,8 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
                     if max_lines is not None:capacity=min(capacity,max_lines)
                     if unsafe:warnings.append('Conversion only. '+reason)
                     if timed and not unsafe and details[0]['line_count']>capacity and not details[0].get('wrapping_skipped'):
-                        packet=service.convert_dialogue_width(c.args['text'],width=width,dialogue_mode=mode,preserve_speaker=bool(asset),convert=convert_width)
+                        packet=service.convert_dialogue_width(c.args['text'],width=width,dialogue_mode=mode,
+                            preserve_speaker=bool(asset),convert=convert_width,cue_spacing=True)
                         packet['fit_warning']=f'Timed text needs {details[0]["line_count"]} lines; this box fits {capacity}. Shorten it to fit one message.'
                         details=[dict(field='text',**packet)];args['text']=packet['text'];pages=[args]
                     if details[0].get('fit_warning'):
@@ -251,6 +253,8 @@ def analyze_cleanup(project,font,settings,*,script_ids=None,command_ids=None,ski
                         if parsed['keywords']:warnings.append('Keyword flags publish as their new pages complete; pagination adds advance/backlog boundaries.')
                     if timed and details[0].get('break_strategy')=='spaces':
                         warnings.append('Timed text uses spaces to trigger native wrapping. Queue tags/times are preserved; cue character indices follow the inserted spaces.')
+                    if details[0].get('inserted_cue_spaces'):
+                        warnings.append(f'{details[0]["inserted_cue_spaces"]} missing sentence space(s) added after timing cues.')
                 if len(pages)>1 or args!=c.args:
                     plan['changes'].append(dict(script_id=sid,command_id=c.uid,opcode=c.opcode,before_texts=dict(text_fields(dict(opcode=c.opcode,args=c.args))),
                         after_texts=[dict(text_fields(dict(opcode=c.opcode,args=p))) for p in pages],pages=pages,details=details,

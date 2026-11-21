@@ -28,6 +28,10 @@ def preview_snapshot(project,field_id,*,plan=None,selected=None):
         raise ValueError('This field has no rendered composition. Inspect its role and consumer contract.')
     value=view.ui_text_assets.get(field_id,{}).get('text',c.fields[field_id]['original'])
     recipe=recipes[0];state=dict(recipe.get('state',{}))
+    if recipe['family']=='slots' and 'text' not in state:
+        from .previewgallery import screen_presets
+        sample=next(row['state'] for row in screen_presets(view) if row['screen_id']=='save')
+        state.update({key:sample[key] for key in ('text','script_sample') if key in sample})
     if recipe.get('composition'):
         combined=recipe['composition'];value=combined['joiner'].join(view.ui_text_assets.get(key,{}).get('text',c.fields[key]['original']) for key in combined['members'])
     if recipe.get('text_parameter')=='text':state['text']=value
@@ -109,7 +113,8 @@ def show_snapshot(owner,project,view,recipe,catalog,title,modal,*,override_text=
     browser=getattr(owner,'_ui_fit_preview',None)
     if browser is None:browser=CompositionBrowser(owner);owner._ui_fit_preview=browser
     records=view.ui_text_assets;font=effective_font(view,owner.session.text)
-    browser.set_context(image_catalog,font,replacements=project.texture_assets,ui_text_assets=records,ui_text_catalog=catalog,defer=True)
+    browser.set_context(image_catalog,font,replacements=project.texture_assets,ui_text_assets=records,ui_text_catalog=catalog,defer=True,
+        battle_badges=project.battle_badges)
     browser.setWindowTitle(title+' — read-only')
     browser.show_recipe(recipe,override_text)
     if modal:browser.exec()

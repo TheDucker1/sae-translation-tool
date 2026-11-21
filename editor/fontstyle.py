@@ -61,6 +61,7 @@ def match_style(value,font,renderer):
 
 
 def project_ui_font(project):
+    from .fontpatch import overridden_font_atlases
     from .pairspacing import config_for
     from .text import TextPresentation
     asset=project.font_asset
@@ -70,6 +71,7 @@ def project_ui_font(project):
         font=TextPresentation(project.root,font_asset=bytes.fromhex(asset['data_hex']))
         font.asset_sha256=key[1];font.pair_spacing=config_for(asset)
         cached=(key,font);project._ui_style_font=cached
+    cached[1].fit_atlas_overrides=overridden_font_atlases(project)
     return cached[1]
 
 

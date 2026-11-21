@@ -5,9 +5,10 @@ import re
 import unicodedata
 from .engine import TEXT_OPS, text_fields
 from .scriptcodec import put
-from .text import fixed_extent, units, unicode_text
+from .text import cue_joins_sentences, fixed_extent, units, unicode_text
 from .textregions import region_area
 from .pairspacing import MEASURED_TEXT_OPCODES, measured_script_field, shape_script
+from .wrapwords import can_mechanically_hyphenate
 
 
 def field_path(name):return tuple(int(x) if x.isdecimal() else x for x in name.replace('[','.').replace(']','').split('.'))
@@ -50,6 +51,20 @@ def reflow_breaks(value,formatter,*,collapse_padding=False):
 
 
 def supports_breaks(opcode):return opcode in MEASURED_TEXT_OPCODES
+
+
+def space_timed_sentences(formatter,value):
+    """Insert a space after a zero-width cue between adjacent sentences."""
+    parsed=formatter.ordinary(value,geometry_only=True,cue_offsets=True)
+    body=parsed['body']
+    # Several cues can share an index. Put the space after the last one.
+    offsets={marker[0]:end for marker,end in zip(parsed['markers'],parsed.get('cue_offsets',()))}
+    inserts={end for index,end in offsets.items() if cue_joins_sentences(body,index)
+             and not any(begin<=index<finish-1 for begin,finish,_ in parsed['ruby'])}
+    if not inserts:return value,0
+    raw=units(value)
+    for at in sorted(inserts,reverse=True):raw=raw[:at]+' '+raw[at:]
+    return unicode_text(raw),len(inserts)
 
 
 def native_field(opcode,value,formatter):
@@ -141,20 +156,22 @@ class TextLayoutService:
         size=int(self.font.utility*scale)
         return fixed_extent(units(value),size,self.font)
 
-    def convert_dialogue_width(self,value,*,width=None,dialogue_mode='auto',preserve_speaker=False,convert=True):
-        """One-for-one visible conversion without changing queue indices or breaks."""
-        conversion=full_width_text(value,self.font,preserve_speaker=preserve_speaker) if convert else dict(text=value,converted_characters=0,preserved_ascii='')
+    def convert_dialogue_width(self,value,*,width=None,dialogue_mode='auto',preserve_speaker=False,convert=True,cue_spacing=False):
+        """Convert display aliases and optionally repair missing cue separators."""
+        planned,cue_spaces=space_timed_sentences(self.font.format,value) if cue_spacing else (value,0)
+        conversion=full_width_text(planned,self.font,preserve_speaker=preserve_speaker) if convert else dict(text=planned,converted_characters=0,preserved_ascii='')
         source=conversion.pop('text')
         # Validate executable controls, including the timed explicit-break ban.
         self.font.format.ordinary(source)
         geometry=self.measure_dialogue(source,width=width,dialogue_mode=dialogue_mode)
         geometry['measurement']='converted_command_text'
         return dict(**geometry,editor_text=editable_newlines(source,self.font.format),changed=source!=value,
-                    full_width_conversion=conversion if convert else None,inserted_breaks=0,hyphenations=0,
+                    full_width_conversion=conversion if convert else None,inserted_breaks=0,hyphenations=0,inserted_cue_spaces=cue_spaces,
                     break_character=self.font.format.break_char,breaks_supported=True,
-                    wrapping_skipped='Conversion only; existing timing, glyph indices and breaks preserved.')
+                    wrapping_skipped=('Cue spacing only before layout; directive times and breaks preserved.' if cue_spaces else
+                                      'Conversion only; existing timing, glyph indices and breaks preserved.'))
 
-    def measure_dialogue(self,value,*,width=None,dialogue_mode='auto'):
+    def measure_dialogue(self,value,*,width=None,dialogue_mode='auto',font_authored=None):
         """Read-only geometry; queue timing/index restrictions do not hide text.
 
         Uses the original string (LF/CR are glyphs, not native breaks). This does
@@ -162,14 +179,21 @@ class TextLayoutService:
         """
         spec=self.dimensions(0x64,value=value,width=width,dialogue_mode=dialogue_mode);f=self.font.format
         parsed=f.ordinary(value,geometry_only=True);body,_=f.prepare(parsed['body'],unit_text=True)
-        display = self.display_body(0x64, value, body, '')
+        if font_authored is None:display=self.display_body(0x64,value,body,'')
+        else:
+            args=self.command.args if self.command else {}
+            wire=script_font_text(self.font,value,0x64,args,'text',authored=font_authored)
+            display=f.ordinary(wire,geometry_only=True)['body']
         glyphs=self.font.layout(display,width=spec['native_width'],scale=spec['scale'],ruby=parsed['ruby'])
         count=max((g['line'] for g in glyphs),default=0)+1
         region=next((r for r in self.battle_regions(0x64,'',value,dialogue_mode) if r['capacity']==count),None)
         if region:spec=self.dimensions(0x64,value=value,width=width,dialogue_mode=dialogue_mode,battle_region=region)
-        lines=['' for _ in range(count)];widths=[0]*count
+        lines=['' for _ in range(count)];widths=[0]*count;visible_widths=[0]*count
         for g in glyphs:
-            line=g['line'];lines[line]+=body[g['index']];widths[line]=max(widths[line],g['x']+int(g['advance']*spec['scale']))
+            line=g['line'];char=body[g['index']];lines[line]+=char
+            right=g['x']+int(g['advance']*spec['scale'])
+            widths[line]=max(widths[line],right)
+            if not char.isspace():visible_widths[line]=max(visible_widths[line],right)
         ruby_overflow=[]
         for begin,end,reading in parsed['ruby']:
             span=[g for g in glyphs if begin<=g['index']<end]
@@ -179,7 +203,7 @@ class TextLayoutService:
             x=span[0]['x']+extent//2-reading_width//2
             if x<0 or x+reading_width>spec['width']:ruby_overflow.append(dict(begin=begin,end=end,left=x,right=x+reading_width))
         return dict(text=value,body=unicode_text(body),speaker=unicode_text(parsed['name']),
-                    lines=[unicode_text(line) for line in lines],line_widths=widths,line_count=count,
+                    lines=[unicode_text(line) for line in lines],line_widths=widths,visible_line_widths=visible_widths,line_count=count,
                     ruby_overflow=ruby_overflow,contains_plain_newlines='\n' in value or '\r' in value,
                     timed_markers=len(parsed['markers']),measurement='original_command_text',**spec)
 
@@ -345,9 +369,11 @@ class TextLayoutService:
         f=self.font.format
         timed=opcode==0x64 and bool(f.ordinary(native_newlines(value,f),geometry_only=reflow)['markers'])
         checked=reflow_breaks(value,f,collapse_padding=timed) if reflow and supports_breaks(opcode) else value
+        cue_spaces=0
+        if timed:checked,cue_spaces=space_timed_sentences(f,checked)
         try:
             options=dict(field=field,width=width,dialogue_mode=dialogue_mode,hyphenate=hyphenate,
-                         full_width_latin=full_width_latin,preserve_speaker=preserve_speaker)
+                         full_width_latin=full_width_latin,preserve_speaker=preserve_speaker,cue_spaces=cue_spaces)
             if opcode==0x3F8 and self.project and (Path(self.project.root)/'env/env_approach.dat').is_file():
                 from .composition import message_environment
                 from .compositionmodes import approach_environment
@@ -372,11 +398,12 @@ class TextLayoutService:
             return self._wrap(opcode,checked,original=value,**options)
         except ValueError as error:
             if not timed:raise
-            result=self.convert_dialogue_width(value,width=width,dialogue_mode=dialogue_mode,preserve_speaker=preserve_speaker,convert=full_width_latin)
+            result=self.convert_dialogue_width(value,width=width,dialogue_mode=dialogue_mode,
+                preserve_speaker=preserve_speaker,convert=full_width_latin,cue_spacing=True)
             result['fit_warning']=str(error)
             return result
 
-    def _wrap(self,opcode,value,*,original,field,width,dialogue_mode,hyphenate,full_width_latin,preserve_speaker,panel=None,battle_region=None):
+    def _wrap(self,opcode,value,*,original,field,width,dialogue_mode,hyphenate,full_width_latin,preserve_speaker,panel=None,battle_region=None,cue_spaces=0):
         conversion=None;style=None
         timed=opcode==0x64 and bool(self.font.format.ordinary(value)['markers'])
         if self.proportional and not supports_breaks(opcode):
@@ -454,15 +481,18 @@ class TextLayoutService:
                     if j>start and (cjk(body[j]) or cjk(body[j-1])) and allowed(j):candidates.append((j,j))
                     j+=1
                 if not candidates:
+                    word_end = next((k for k in range(start, end) if body[k].isspace()), end)
+                    can_hyphenate = hyphenate and can_mechanically_hyphenate(unicode_text(body[start:word_end]))
                     possible=[j for j in range(start+2,min(i+1,end-1))
-                              if hyphenate and allowed(j) and letter_before(j) and body[j].isalpha()
+                              if can_hyphenate and allowed(j) and letter_before(j) and body[j].isalpha()
                               and span(start,j)+advance(hyphen)<=limit]
                     if possible:
                         cut=possible[-1];hyphens.add(cut);lines.append((start,cut))
                         replacements.append((pairs[cut][1],pairs[cut][1],hyphen+f.break_char));start=cut;limit=line_limit(len(lines));continue
                     word=unicode_text(body[start:min(end,start+60)])
                     raise ValueError(f'Unbreakable word/ruby span exceeds {limit}px: {word!r}. Shorten it or add a deliberate break.')
-                cut,resume=candidates[-1];lines.append((start,cut))
+                cut,resume=candidates[-1]
+                lines.append((start,cut))
                 if resume>cut:
                     # Remove separator characters individually; preserve any controls between them.
                     edits={ (pairs[k][1],pairs[k][2]) for k in range(cut,resume) }
@@ -496,6 +526,7 @@ class TextLayoutService:
         self.check_box(opcode,field,len(lines),spec)
         return dict(text=result,editor_text=editable_newlines(result,f),changed=result!=original,full_width_conversion=conversion,
                     inserted_breaks=0 if timed else len(lines)-1-body.count(f.break_char),line_count=len(lines),
+                    inserted_cue_spaces=cue_spaces,
                     break_strategy='spaces' if timed else 'native',
                     hyphenations=len(hyphens),lines=[unicode_text(body[a:b])+(hyphen if b in hyphens else '') for a,b in lines],
                     line_widths=(draw_widths+[0]*(len(lines)-len(draw_widths)) if draw_widths is not None else

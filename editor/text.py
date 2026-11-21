@@ -39,12 +39,29 @@ def glyph_draw_width(font,character,size):
 
 
 def fixed_extent(row,size,font):
-    """Right edge of the visible cells, including any cached-glyph overhang."""
+    """Right edge of the ink at fixed cursor positions, including glyph overhang."""
     pen=extent=0
     for char in row:
-        if not char.isspace():extent=max(extent,pen+glyph_draw_width(font,char,size))
+        if not char.isspace():
+            width=glyph_draw_width(font,char,size)
+            ink=font.cached_ink_right(char) if hasattr(font,'cached_ink_right') else None
+            if ink is not None:
+                source=font.cached[char][3]
+                # Linear texture sampling can reach the next source texel.
+                width=(min(source,ink+1)*width+source-1)//source if ink else 0
+            if width:extent=max(extent,pen+width)
         pen+=cursor_advance(char,size)
     return extent
+
+
+def cue_joins_sentences(body,index):
+    if not 0<=index<len(body)-1:return False
+    after=index+1
+    while index>=0 and body[index] in '”’」』）)]':index-=1
+    while after<len(body) and body[after] in '“‘「『（([':after+=1
+    if index<0 or after>=len(body) or body[index] not in '.．。?!！？…' or not body[after].isalnum():
+        return False
+    return not (body[index] in '.．' and index>0 and body[index-1].isdigit() and body[after].isdigit())
 
 
 class TextFormat:
@@ -70,7 +87,7 @@ class TextFormat:
             text = ''.join(c for c in text if c not in self.following[2][:2])
         return dict(name=name, body=text[len(name):], ruby=[], keywords=[], markers=[])
 
-    def ordinary(self, value, *, geometry_only=False):
+    def ordinary(self, value, *, geometry_only=False, cue_offsets=False):
         source = units(value)
         if len(source)>1024*1024: raise ValueError('Message exceeds input budget')
         source = source.split('\0',1)[0]
@@ -79,7 +96,7 @@ class TextFormat:
         aside = None; quote = source.find(f[1])
         if quote>0 and quote+1<len(source) and source[quote+1] in f[0][:2]:
             aside=source[:quote]; source=''.join(c for c in source if c not in f[2][:2])
-        plain=''; cursor=0; ruby=[]; keywords=[]; markers=[]; base=None; keyword=None
+        plain=''; cursor=0; ruby=[]; keywords=[]; markers=[]; offsets=[]; base=None; keyword=None
         def native_number(word):
             n=0
             for c in word:
@@ -116,6 +133,7 @@ class TextFormat:
                 lane,time=native_number(parts[1]),native_number(parts[2])
                 if not 0<=lane<5 or time<0: raise ValueError('Inline queue lane/time outside range')
                 markers.append([len(plain)-1,lane,time])
+                if cue_offsets and aside is None:offsets.append(end+1)
             cursor=end+1
         parsed=self.split(plain)
         if aside is not None:
@@ -136,6 +154,7 @@ class TextFormat:
             if not geometry_only and (not before<=marker[0]<glyph_count or marker[2]<time): raise ValueError('Invalid or nonmonotonic text queue marker')
             before,time=marker[0],marker[2]
         parsed.update(ruby=ruby,keywords=keywords,markers=markers)
+        if cue_offsets:parsed['cue_offsets']=offsets
         return parsed
 
     def prepare(self, value, font_tags=False, unit_text=False):
@@ -227,6 +246,26 @@ class TextPresentation:
         self.charset=set(self.characters)
         self.font_data=(root/'DFHSR4.TTC').read_bytes();self.raw_font=None;self.glyph_cache={};self.atlas_cache={}
         self.pvf_cells=None
+        self.ink_cache={}
+
+    def cached_ink_right(self,char):
+        """Rightmost covered source column plus one for unmodified bitmap glyphs."""
+        record=self.cached.get(char)
+        if not record or not hasattr(self,'ink_cache'):return None
+        atlas,x,y,width,_=record
+        if atlas<0 or atlas in getattr(self,'fit_atlas_overrides',()):return None
+        key=(atlas,x,y,width,self.bitmap_height)
+        if key not in self.ink_cache:
+            if atlas not in self.atlas_cache:self.atlas_cache[atlas]=font_atlas(self.atlases[atlas])
+            aw,ah,pixels=self.atlas_cache[atlas]
+            if x+width>aw or y+self.bitmap_height>ah:raise ValueError('Font glyph outside atlas')
+            right=0
+            for row in range(y,y+self.bitmap_height):
+                start=(row*aw+x)*4+3
+                alpha=pixels[start:start+width*4:4]
+                right=max(right,len(alpha.rstrip(b'\0')))
+            self.ink_cache[key]=right
+        return self.ink_cache[key]
 
     def measure(self, text, pixels):
         width=0;scale=pixels/36 if pixels else 1

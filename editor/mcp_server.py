@@ -7,12 +7,12 @@ from mcp.types import ToolAnnotations
 from .translation import GUIDE,TranslationWorkspace
 from .visualcontext import protocol_image
 
-VISUAL_TOOLS=('list_textures','get_texture','get_texture_usage','list_ui_scenes','describe_ui_scene','get_ui_scene','get_ui_scene_layers','get_ui_text_preview','get_text_cleanup_preview')
+VISUAL_TOOLS=('list_textures','get_texture','get_texture_usage','list_ui_scenes','describe_ui_scene','get_ui_scene','get_ui_scene_layers','get_ui_text_preview','get_text_cleanup_preview','preview_message','list_preview_screens','get_preview_screen')
 READ_TOOLS=('get_translation_guide','get_status','list_scripts','get_dialogue_flow','list_commands','get_context','search_text','list_opcodes',
-            'get_script_flow','get_file_links','opcode_help','command_template','format_text','analyze_text_cleanup','get_text_cleanup_plan','validate_project','preview_view','check_texture_export','list_ui_text','get_ui_text','format_ui_text')+VISUAL_TOOLS
-WRITE_TOOLS=('configure_translation','apply_translations','apply_text_cleanup','edit_commands','undo','redo','save_project','load_project',
+            'get_script_flow','get_file_links','opcode_help','command_template','format_text','analyze_text_cleanup','get_text_cleanup_plan','validate_project','preview_view','check_texture_export','list_ui_text','get_ui_text','format_ui_text','list_speaker_repairs')+VISUAL_TOOLS
+WRITE_TOOLS=('configure_translation','apply_translations','apply_speaker_repairs','apply_text_cleanup','edit_commands','undo','redo','save_project','load_project',
              'export_game_copy','preview_start','preview_step','preview_run','preview_rewind','preview_debug',
-             'import_texture_png','remove_texture_replacement','write_texture_png','apply_ui_text','repair_ui_text_font')
+             'import_texture_png','remove_texture_replacement','write_texture_png','apply_ui_text','repair_ui_text_font','export_preview_gallery','set_battle_result_badges')
 
 INSTRUCTIONS='''This is the Saekano translation editor, exposed through the same Python project and scenario model as its GUI.
 First call get_translation_guide and get_status. Read get_dialogue_flow for speaker/text/choices/branches/state; image/audio/actor commands are compact inspectable cues.
@@ -28,10 +28,13 @@ With font revision 8 or later, eligible plain ordinary choices, Approach topics 
 Font revision 9 improves the ơ and ư outlines. Packed labels automatically adjust gaps between adjacent letter masks. Measured dialogue, battle choices, Approach results and measured UI assets select proportional glyphs in preview and export. Keep ordinary word spaces and preserve the authored controls.
 Chapter titles, battle introduction captions and eligible UTF-16 UI labels also use proportional bitmap strips. Auto-fit checks the actual panel or row when these labels are packed. Revision 10 adds compact brackets for untimed keyword dialogue. Apply the proposed font through Auto-fit and export the matching font and text together.
 For image/UI context use list_textures/get_texture/get_texture_usage and list_ui_scenes/describe_ui_scene/get_ui_scene/get_ui_scene_layers.
+Use list_preview_screens for the major-window gallery presets, get_preview_screen for one image, or export_preview_gallery for a scrollable HTML bundle with PNGs and a scene manifest.
+Use set_battle_result_badges to save or revert a matching set of result wordmarks and layout, then inspect the three battle result gallery screens.
 Texture/scene tools return native MCP image content plus structured metadata. Scene layers distinguish text from baked texture lettering and report original pixel geometry, order/pass/targets/masks and source IDs. Page layers; request glyphs only when needed.
 Scene snapshots are static supported UI layouts with explicit preview state, not recovered story scenes or evidence of native execution. Supply translated text from get_context through the described state fields. Read coverage/diagnostics; never infer missing actors, media or runtime state. Stale snapshot/catalog requests require fresh discovery.
 Texture authoring:write_texture_png creates a separate new workspace PNG; edit it externally, then import_texture_png with expected_revision. Same dimensions, lossless <=8-bit PNG, transparent pixels preserved. Replacements are saved inside the project with Undo/Redo; get_texture(view='current' or 'original') compares them, and get_ui_scene uses current replacements. remove_texture_replacement reverts one asset. check_texture_export performs actual lossless GXT preflight without writing files; P8 permits <=256 RGBA colors, opaque originals must stay opaque. export_game_copy merges textures, scripts and generated font into a separate game-data copy, updating archive metadata. No resize, automatic quantization, format conversion or executable changes.
 Fetch original/current fields through get_context before editing. Raw command arguments are optional with details=true.
+Use list_speaker_repairs and apply_speaker_repairs for missing Message labels. These edits preserve the raw body and controls. A missing known mapping needs an explicit reviewed label. preview_message renders the source-bound command or an unapplied repair with its layout and timed/ruby/keyword metadata; use it instead of passing stripped display.text into a generic scene.
 Preserve native control tokens and non-text semantics. Use stable command IDs, exact expected_text and expected_revision.
 Apply small atomic translation batches; structural editing is separate. Stale/invalid edits are rejected without partial changes.
 For translated line layout use format_text proposals or wrap_words=true per edit. Enter becomes a native break in multiline dialogue/battle choices/results; single-line labels only support fit checks. Omit dialogue_mode for automatic command/file ownership; an explicit mode is a deliberate override. Preserve hard breaks and shorten unbreakable overflow.
@@ -55,12 +58,12 @@ def tool_handler(fn,invoke=None):
 def create_server(workspace:TranslationWorkspace,invoke=None):
     live=getattr(workspace,'live',False)
     mode=('LIVE GUI: same in-memory project and preview as the human. get_status reports GUI selection/playback/state_revision/context_revision. Pause playback with pause_preview, then pass expected_state_revision for preview/navigation writes. Project edits require expected_revision; configure_translation requires expected_context_revision. Busy dialogs/export and stale requests reject; refresh status/context and retry. focus_command selects inspection without splicing VM state.' if live else 'STANDALONE: one process owns one in-memory project; hand off saved files to the GUI, not concurrent live editing.')
-    server=MCPServer('Saekano Translator',version='1.9.1',instructions=INSTRUCTIONS+'\n'+mode,log_level='WARNING')
+    server=MCPServer('Saekano Translator',version='1.10.0',instructions=INSTRUCTIONS+'\n'+mode,log_level='WARNING')
     def call(fn,*args,**kwargs):return invoke(fn,args,kwargs) if invoke else fn(*args,**kwargs)
     extra=('pause_preview','focus_command') if live else ()
     for name in READ_TOOLS+WRITE_TOOLS+extra:
         server.add_tool(tool_handler(getattr(workspace,name),invoke),structured_output=True,annotations=ToolAnnotations(
-            read_only_hint=name in READ_TOOLS,destructive_hint=name in {'apply_ui_text','repair_ui_text_font','apply_translations','apply_text_cleanup','edit_commands','configure_translation','save_project','load_project','undo','redo','import_texture_png','remove_texture_replacement'},
+            read_only_hint=name in READ_TOOLS,destructive_hint=name in {'apply_ui_text','repair_ui_text_font','apply_translations','apply_speaker_repairs','apply_text_cleanup','edit_commands','configure_translation','save_project','load_project','undo','redo','import_texture_png','remove_texture_replacement'},
             idempotent_hint=name in READ_TOOLS and name!='analyze_text_cleanup',open_world_hint=False))
 
     @server.resource('saekano://guide',mime_type='text/markdown')

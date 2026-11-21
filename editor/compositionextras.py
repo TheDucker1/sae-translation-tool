@@ -5,6 +5,7 @@ from .compositioncommon import cached, quad
 from .compositionlists import backdrop_sprite, button_help, help_environment, new_marker
 from .imagecodec import ImageError
 from .text import units, color
+from .uitextcodec import format_ui_numbers
 
 
 def extras_environment(data):
@@ -305,10 +306,8 @@ def music_layout(d):
     if playing and not 0 <= elapsed <= duration: raise ImageError('Music position outside selected track duration')
     for seconds, point in ((elapsed if playing else d.e.signed(0xd844), 0xd778), (duration if playing else d.e.signed(0xd844), 0xd780)):
         a, b = (seconds // 60, seconds % 60) if playing else (seconds, seconds)
-        value = d.e.strings[0xd848].replace('%02d', str(b).zfill(2)).replace('%d', str(a))
-        value = d.font.format.normalize(units(value))
-        from .text import unicode_text
-        d.text('Music time', unicode_text(value), d.e.point[point], d.size(0xd788))
+        value = format_ui_numbers(d.e.strings[0xd848], (a, b), capacity=64)
+        d.text('Music time', value, d.e.point[point], d.size(0xd788))
     if playing and duration:
         layer = d.add(0xd514, 27, anchored=False, tint=[255] * 4); layer.destination[2] = int(d.e.signed(0xd538) * elapsed / duration)
     start = len(d.out.layers); pitch = d.e.point[0xd698][1]

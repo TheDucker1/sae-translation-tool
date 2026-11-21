@@ -5,6 +5,7 @@ if importlib.util.find_spec('mcp') is None:raise unittest.SkipTest('Optional MCP
 from copy import deepcopy
 import hashlib,json,tempfile,threading
 from pathlib import Path
+from types import SimpleNamespace
 from editor.translation import TranslationWorkspace,GUIDE
 from editor.mcp_models import TranslationEdit,CommandEdit
 from editor.engine import ROOT
@@ -58,6 +59,53 @@ class TranslationChecks(unittest.TestCase):
         w.edit_commands([CommandEdit(action='delete',script_id=0,command_id=target,replacement_id=p.scripts[0].commands[-1].uid)],p.revision)
         self.assertTrue(w.validate_project()['valid'])
         self.assertEqual(w.get_script_flow(0,anchor)['edges'][0]['source_id'] is not None,True)
+
+    def test_speaker_batch_keeps_raw_body_cues_and_command_identity(self):
+        from test_width_controls import font_fixture
+        w=self.w;p=w.project
+        font=font_fixture();p.text_format=font.format
+        w._runtime=SimpleNamespace(text=font,settings={})
+        command,other=p.scripts[0].commands[2],p.scripts[0].commands[4]
+        body='Một câu.《SP QUE,1,3400》  Câu sau.\0opaque'
+        p.replace(0,command.uid,command.opcode,dict(command.args,text=body,voice=42))
+        before=p.scripts;revision=p.revision;raw=p.compile(0)
+        edit=dict(script_id=0,command_id=command.uid,expected_text=body,speaker='Eriri')
+        with self.assertRaisesRegex(ValueError,'Stale expected_text'):
+            w.apply_speaker_repairs([edit,dict(edit,command_id=other.uid)],revision)
+        self.assertIs(p.scripts,before)
+        result=w.apply_speaker_repairs([edit],revision)
+        self.assertEqual(result['applied'][0]['layout']['timed_markers'],1)
+        _,new=w.command(0,command.uid)
+        self.assertEqual(new.args,dict(command.args,text='Eriri「Một câu.《SP QUE,1,3400》  Câu sau.」\0opaque',voice=42))
+        self.assertEqual((new.uid,new.opcode,new.post,new.original_index),(command.uid,command.opcode,command.post,command.original_index))
+        self.assertEqual(p.scripts[0].commands[1],before[0].commands[1])
+        with self.assertRaisesRegex(ValueError,'Stale project'):w.apply_speaker_repairs([edit],revision)
+        w.undo(p.revision);self.assertEqual(p.compile(0),raw)
+
+    def test_speaker_repair_honors_existing_wrappers_and_native_asides(self):
+        from editor.speakeredit import propose_speaker
+        from test_width_controls import font_fixture
+        f=font_fixture().format
+        f.following[:3]=['（【','「','「」']
+        self.assertEqual(propose_speaker(f,'「Một＿câu」','恵「声」')['text'],'Megumi「Một＿câu」')
+        self.assertEqual(propose_speaker(f,'（Một＿câu）','倫也「（声）」')['text'],'Tomoya「（Một＿câu）」')
+        self.assertEqual(propose_speaker(f,'Một câu','？？？「声」')['speaker'],'???')
+        with self.assertRaisesRegex(ValueError,'No established'):
+            propose_speaker(f,'Một câu','未登録「声」')
+        with self.assertRaisesRegex(ValueError,'different speaker'):
+            propose_speaker(f,'Eriri「Một câu」','恵「声」')
+        self.assertEqual(propose_speaker(f,'Eriri「Một câu」','恵「声」',expected_speaker='Eriri')['text'],'Megumi「Một câu」')
+
+    def test_speaker_only_edit_keeps_source_font_policy_for_original_text(self):
+        from test_width_controls import font_fixture
+        p=self.w.project;p.text_format=font_fixture().format
+        c=p.scripts[0].commands[2]
+        p.set_message_speakers([dict(script_id=0,command_id=c.uid,expected_text=c.args['text'],speaker='Name')],p.revision)
+        self.assertTrue(p.scripts[0].commands[2].authored)
+        self.assertFalse(p.scripts[0].commands[2].font_authored)
+        self.assertIn(2,p.revision_request(0)['scripts'][0]['keep_source_font'])
+        save=self.w.path('source-font.saekano.json');p.save(save)
+        self.assertFalse(type(p).load(save,p).scripts[0].commands[2].font_authored)
 
     def test_paged_context_safe_save_profile_and_external_change_detection(self):
         w=self.w;p=w.project

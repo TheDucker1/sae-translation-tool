@@ -1,7 +1,7 @@
 """Stable-ID project, typed reference relocation, validation and undo transactions."""
-from dataclasses import dataclass,field,asdict
+from dataclasses import dataclass,field,asdict,replace
 from pathlib import Path
-from copy import deepcopy
+from copy import copy,deepcopy
 from collections import Counter
 import hashlib,json,uuid
 from .engine import TEXT_OPS,ROOT,text_fields
@@ -25,6 +25,11 @@ class Command:
     post:int
     original_index:int|None
     authored:bool=False
+    keep_source_font:bool=False
+
+    @property
+    def font_authored(self):
+        return self.authored and not self.keep_source_font
 
 
 @dataclass
@@ -55,7 +60,7 @@ class Project:
         self.text_format=TextFormat(format_path.read_bytes()) if format_path and format_path.is_file() else None
         self.selection_layout=None
         self.font_asset=None
-        self.texture_assets={};self._texture_catalog=None
+        self.texture_assets={};self._texture_catalog=None;self.battle_badges=None
         self.ui_text_assets={};self._ui_text_catalog=None
         selection_path=Path(root)/'env/env_script_select.dat' if root else None
         if selection_path and selection_path.is_file():
@@ -118,7 +123,7 @@ class Project:
             projected = False
             if wire_text:
                 for field, value in text_fields(dict(opcode=c.opcode, args=args)):
-                    wire = wire_text(c.opcode, args, field, value, c.authored)
+                    wire = wire_text(c.opcode, args, field, value, c.font_authored)
                     if wire != value:
                         codec.put(args, field_path(field), wire)
                         projected = True
@@ -232,6 +237,51 @@ class Project:
             s.commands[i]=Command(uid,opcode,args,old.raw if opcode==old.opcode else '',old.post,old.original_index,True)
         self._transaction(sid,'Edit/replace text command',change)
 
+    def speaker_proposal(self,script_id,command_id,expected_text,speaker=None,expected_speaker=None):
+        from .speakeredit import propose_speaker
+        script=self.scripts.get(script_id)
+        command=next((row for row in script.commands if row.uid==command_id),None) if script else None
+        if command is None or command.opcode!=0x64:
+            raise EditError('Speaker editing requires a Message command in this script')
+        if command.args['text']!=expected_text:
+            raise EditError('Stale expected_text; re-read the Message')
+        baseline=self.baseline.get(script_id)
+        original=(baseline.commands[command.original_index] if baseline and command.original_index is not None
+                  and 0<=command.original_index<len(baseline.commands) else None)
+        source=original.args['text'] if original and original.uid==command_id and original.opcode==0x64 else None
+        return propose_speaker(self.text_format,expected_text,source,speaker,expected_speaker)
+
+    def set_message_speakers(self,edits,expected_revision):
+        if self.revision!=expected_revision:
+            raise EditError('Stale project revision; re-read the Messages')
+        if not 1<=len(edits)<=100:raise EditError('A speaker batch requires 1–100 Messages')
+        proposals=[];replacements={};seen=set()
+        for edit in edits:
+            sid,uid=edit['script_id'],edit['command_id']
+            if uid in seen:raise EditError(f'Duplicate Message in speaker batch: {uid}')
+            seen.add(uid)
+            try:proposal=self.speaker_proposal(**edit)
+            except ValueError as error:raise EditError(f'{uid}: {error}') from error
+            if proposal['text']==edit['expected_text']:continue
+            proposals.append(dict(script_id=sid,command_id=uid,**proposal))
+            replacements.setdefault(sid,{})[uid]=proposal['text']
+        if not replacements:return []
+        candidate=copy(self);candidate.scripts=self.scripts.copy()
+        for sid,texts in replacements.items():
+            script=self.scripts[sid]
+            candidate.scripts[sid]=replace(script,commands=[
+                replace(command,args=dict(command.args,text=texts[command.uid]),authored=True,
+                        keep_source_font=not command.font_authored)
+                if command.uid in texts else command for command in script.commands])
+        issues=candidate.validate()
+        if issues:
+            issue=issues[0]
+            raise EditError(f'Speaker batch rejected at {issue.command or issue.script}: {issue.message}')
+        self.remember(('Edit message speakers',self.scripts,candidate.scripts))
+        self.scripts=candidate.scripts;self.touched.update(replacements);self.redo_stack.clear()
+        self.preview_issues=[];self.revision=uuid.uuid4().hex
+        return proposals
+
     def delete(self,sid,uid,retarget=None):
         old=next(c for c in self.scripts[sid].commands if c.uid==uid)
         if old.opcode not in TEXT_OPS:raise EditError('Only text opcodes can be deleted')
@@ -259,6 +309,7 @@ class Project:
             if len(item)>3:self.font_asset=item[3]
             if len(item)>5:self.texture_assets=item[5]
             if len(item)>7:self.ui_text_assets=item[7]
+            if len(item)>9:self.battle_badges=item[9]
 
     def redo(self):
         if self.redo_stack:
@@ -266,12 +317,14 @@ class Project:
             if len(item)>3:self.font_asset=item[4]
             if len(item)>5:self.texture_assets=item[6]
             if len(item)>7:self.ui_text_assets=item[8]
+            if len(item)>9:self.battle_badges=item[10]
 
     def remember(self,item):
         """Every kind of transaction retains the same auxiliary asset snapshots."""
         if len(item)==3:item=(*item,self.font_asset,self.font_asset)
         if len(item)==5:item=(*item,self.texture_assets,self.texture_assets)
         if len(item)==7:item=(*item,self.ui_text_assets,self.ui_text_assets)
+        if len(item)==9:item=(*item,self.battle_badges,self.battle_badges)
         self.undo_stack.append(item)
 
     def set_ui_texts(self,edits):
@@ -310,6 +363,7 @@ class Project:
 
     def set_texture(self,identity,data,catalog):
         from .textureassets import make_replacement,check_budget
+        self.guard_badge_texture(identity)
         if Path(self.root).resolve()!=catalog.root:raise EditError('Texture catalog belongs to another game source')
         record=make_replacement(catalog,identity,data);before=self.texture_assets;after=dict(before,**{identity:record})
         check_budget(after)
@@ -317,9 +371,37 @@ class Project:
         self._texture_catalog=catalog;self._texture_transaction('Replace texture PNG',before,after);return True
 
     def remove_texture(self,identity):
+        self.guard_badge_texture(identity)
         if identity not in self.texture_assets:raise EditError('Texture has no project replacement')
         before=self.texture_assets;after=before.copy();del after[identity]
         self._texture_transaction('Revert texture to original',before,after)
+
+    def guard_badge_texture(self,identity):
+        if self.battle_badges and identity in self.battle_badges['png_hashes']:
+            raise EditError('Edit or revert the battle result badge as a complete set')
+
+    def set_battle_badges(self,labels,catalog):
+        from .battlebadges import ASSETS,build,validate
+        from .textureassets import check_budget
+        if Path(self.root).resolve()!=catalog.root:raise EditError('Texture catalog belongs to another game source')
+        before=self.texture_assets
+        if labels is None:
+            if self.battle_badges is None:return False
+            validate(self.root,self.battle_badges,before)
+            badge=None;after={key:value for key,value in before.items() if key not in ASSETS}
+        else:
+            if self.battle_badges is None and not ASSETS.isdisjoint(before):
+                raise EditError('Battle result textures already have replacements. Revert those textures before applying a badge set.')
+            badge,images=build(self.root,catalog,labels)
+            after=dict(before,**images)
+            if self.battle_badges==badge and before==after:return False
+        check_budget(after)
+        scripts=self.scripts.copy()
+        self.remember(('Battle result badges',scripts,scripts,self.font_asset,self.font_asset,
+            before,after,self.ui_text_assets,self.ui_text_assets,self.battle_badges,badge))
+        self._texture_catalog=catalog;self.texture_assets=after;self.battle_badges=badge
+        self.redo_stack.clear();self.revision=uuid.uuid4().hex
+        return True
 
     def _texture_transaction(self,label,before,after):
         scripts=self.scripts.copy()
@@ -336,7 +418,9 @@ class Project:
         scripts=[];locations=self.locations()
         for sid in sorted(self.touched):
             s=self.scripts[sid];blob=self.compile(sid,locations)
-            if blob.hex()!=s.original:scripts.append(dict(id=sid,data_hex=blob.hex(),check_text=[i for i,c in enumerate(s.commands) if c.authored]))
+            if blob.hex()!=s.original:
+                scripts.append(dict(id=sid,data_hex=blob.hex(),check_text=[i for i,c in enumerate(s.commands) if c.authored],
+                                    keep_source_font=[i for i,c in enumerate(s.commands) if c.keep_source_font]))
         return dict(scripts=scripts,revision_id=self.revision,entry=entry,apply=apply,font_asset=self.font_asset,ui_text_assets=self.ui_text_assets)
 
     def display(self,sid):
@@ -377,12 +461,17 @@ class Project:
         if path.is_relative_to((ROOT.parent/'impacto-sae').resolve()):raise EditError('Keep editor projects outside the Impacto checkout')
         from .textureassets import validate_collection
         self._texture_catalog=validate_collection(self.texture_assets,self.root,self._texture_catalog)
+        from .battlebadges import validate
+        validate(self.root,self.battle_badges,self.texture_assets)
         if self.ui_text_assets:
             from .uitext import get_catalog,validate_records
             validate_records(self.ui_text_assets,get_catalog(self),pairing=config_for(self.font_asset))
-        data=dict(format='saekano-editor',version=3 if self.ui_text_assets else 2 if self.texture_assets else 1,root=self.root,revision=self.revision,touched=sorted(self.touched),fingerprints=self.fingerprints(),scripts=[asdict(self.scripts[sid]) for sid in sorted(self.touched)])
+        def saved_fields(items):
+            return {key:value for key,value in items if key!='keep_source_font' or value}
+        data=dict(format='saekano-editor',version=3 if self.ui_text_assets else 2 if self.texture_assets else 1,root=self.root,revision=self.revision,touched=sorted(self.touched),fingerprints=self.fingerprints(),scripts=[asdict(self.scripts[sid],dict_factory=saved_fields) for sid in sorted(self.touched)])
         if self.font_asset:data['font_asset']=self.font_asset
         if self.texture_assets:data['texture_assets']=self.texture_assets
+        if self.battle_badges:data['battle_badges']=self.battle_badges
         if self.ui_text_assets:data['ui_text_assets']=self.ui_text_assets
         temp=path.with_name(path.name+'.tmp');temp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8');temp.replace(path);self.saved_revision=self.revision
 
@@ -404,11 +493,14 @@ class Project:
         project.font_asset=data.get('font_asset')
         from .textureassets import validate_collection
         project.texture_assets=data.get('texture_assets',{})
+        project.battle_badges=data.get('battle_badges')
         project.ui_text_assets=data.get('ui_text_assets',{})
         if project.ui_text_assets:
             from .uitext import get_catalog
             project.validate_ui_records(project.ui_text_assets,get_catalog(project))
         project._texture_catalog=validate_collection(project.texture_assets,base.root)
+        from .battlebadges import validate
+        validate(base.root,project.battle_badges,project.texture_assets)
         if project.font_asset:
             from .fontpatch import validate_asset
             validate_asset(project.font_asset,base.root)

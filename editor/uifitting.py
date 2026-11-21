@@ -4,10 +4,10 @@ import math,re
 from .text import fixed_extent,units,unicode_text
 from .textlayout import TextLayoutService,native_newlines
 from .pairspacing import shape_measured,shape_profile
-from .uitextcodec import PRINTF
+from .uitextcodec import PRINTF,format_ui_numbers
 from .uifit import fit_profile_tip,profile_context,row_metrics,tip_geometry,wrap_tip
 from .uipanel import fit_panel
-from .choiceart import make_label,ui_label_placement,ui_row_placement
+from .choiceart import ChoiceAtlas,make_label,pack_slot_prefix,slot_prefix_size,ui_label_placement,ui_row_placement
 
 
 def substitute(value,arguments):
@@ -79,18 +79,28 @@ class ConsumerLayout(TextLayoutService):
         return value,body,pairs,ruby
 
 
-def fixed_check(value,c,font,placement=None):
-    size=int(font.utility*c['scale']);values=[]
+def fixed_check(value,c,font,placement=None,prefix_size=None):
+    size=math.floor(font.utility*c['scale'] + (.5 if c.get('round_size') else 0));values=[]
+    logical=None
+    if prefix_size:
+        atlas=ChoiceAtlas(font)
+        wire,_=pack_slot_prefix(value,prefix_size,atlas.encode)
+        values=[format_ui_numbers(wire,args) for args in c['format_samples']]
+        logical=[format_ui_numbers(value,args) for args in c['format_samples']]
+        generated=set(atlas.glyphs.values())
+    else:generated=set()
     if PRINTF.search(value):
         if not c.get('format_samples'):raise ValueError('Formatted UI text needs runtime substitution context; raw placeholders cannot be measured as labels')
-        for args in c['format_samples']:values.append(substitute(value,args)[0])
-    else:values=[value]
+        if not prefix_size:
+            for args in c['format_samples']:
+                values.append(format_ui_numbers(value,args,capacity=c.get('format_capacity',128))
+                              if c.get('normalize_numbers') else substitute(value,args)[0])
+    elif not prefix_size:values=[value]
     results=[]
-    for text in values:
-        if c.get('normalize_numbers'):text=unicode_text(font.format.normalize(units(text)))
+    for i,text in enumerate(values):
         if any(ch in text for ch in '\r\n') or font.format.break_char in text:
             raise ValueError('This UI consumer is single-line; native line breaks are unsupported')
-        missing=set(units(text))-(font.charset|font.cached.keys())
+        missing=set(units(text))-(font.charset|font.cached.keys()|generated)
         if missing:raise ValueError('The game font has no glyphs for '+repr(unicode_text(''.join(sorted(missing)))))
         packed=make_label(font,text,placement[0],**placement[1]) if placement else None
         offset,extent=packed.bounds(size) if packed else (0,fixed_extent(units(text),size,font))
@@ -102,7 +112,7 @@ def fixed_check(value,c,font,placement=None):
         right=x+extent
         if x<c['left'] or right>c['right']:
             raise ValueError(f'Single-line UI occupies x={x}..{right} ({extent}px); region x={c["left"]}..{c["right"]}. Shorten this label; it cannot wrap.')
-        results.append(dict(text=text,width=extent,x=x,right=right,size=size))
+        results.append(dict(text=logical[i] if logical is not None else text,width=extent,x=x,right=right,size=size))
     return results
 
 
@@ -128,7 +138,7 @@ def field_fit(identity,value,catalog,working,font,*,reflow,hyphenate,skip=False,
         kind=c['kind']
         if kind=='profile_tips':continue
         if kind=='requires_context':raise ValueError(c['note'])
-        if kind=='fixed':checks.extend(fixed_check(value,c,font,ui_label_placement(f,font)))
+        if kind=='fixed':checks.extend(fixed_check(value,c,font,ui_label_placement(f,font),slot_prefix_size(f,font)))
         elif kind=='retained_text':checks.append(dict(kind=kind,rendered=False,note=c['note']))
         elif kind=='composed_dialog':
             if c['joiner'] not in font.cached:
